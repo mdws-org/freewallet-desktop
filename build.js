@@ -10,13 +10,14 @@
  */
 import nwbuild from 'nw-builder';
 import { cp, rm, mkdir } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const baseDir = dirname(fileURLToPath(import.meta.url));
 
-// Staging directory holding exactly the files the app needs at runtime. The app
-// loads its libraries from node_modules, so that directory must be bundled too.
+// Staging directory holding exactly the files the app needs at runtime.
+// Production dependencies are installed into it by stage() below.
 const srcDir = resolve(baseDir, 'build');
 const outDir = resolve(baseDir, 'builds');
 
@@ -31,7 +32,6 @@ const includes = [
   'js',
   'misc',
   'hardware',
-  'node_modules',
 ];
 
 // NW.js runtime version verified to run FreeWallet on Apple Silicon.
@@ -50,6 +50,15 @@ async function stage() {
       verbatimSymlinks: true,
     });
   }
+  // The app loads its libraries from node_modules at runtime, so they must be
+  // bundled -- but only the runtime ones. Installing into the staging directory
+  // with --omit=dev keeps build tooling (nw-builder and its dependencies) out
+  // of the shipped application.
+  console.log('### Installing production dependencies into staging directory...');
+  execFileSync('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+    cwd: srcDir,
+    stdio: 'inherit',
+  });
 }
 
 await stage();

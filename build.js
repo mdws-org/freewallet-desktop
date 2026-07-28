@@ -1,23 +1,85 @@
-/* 
- * nwjs builder script
+/*
+ * NW.js builder script (nw-builder 4.x, ESM)
+ *
+ * Produces native NW.js application bundles for macOS. FreeWallet runs natively
+ * on Apple Silicon (arm64) using NW.js 0.92.0 with no source changes, so arm64
+ * is built by default. Pass `--all` to also build the Intel (x64) bundle.
+ *
+ *   node build.js          # builds osx-arm64
+ *   node build.js --all    # builds osx-arm64 and osx-x64
  */
-var NwBuilder = require('nw-builder');
-var nw = new NwBuilder({
-    files: './build/**', // use the glob format
-    platforms: ['osx64', 'win32', 'win64', 'linux32', 'linux64'],
-    cacheDir: './cache',
-    buildDir: './builds/',
-    macIcns:  './build/images/FreeWallet.icns',
-    // macCredits: './build/html/credits.html'
-    // winIco: '',
-});
+import nwbuild from 'nw-builder';
+import { cp, rm, mkdir } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-// Output logs to the console
-nw.on('log',  console.log);
+const baseDir = dirname(fileURLToPath(import.meta.url));
 
-// Build returns a promise
-nw.build().then(function () {
-   console.log('all done!');
-}).catch(function (error) {
-    console.error(error);
-});
+// Staging directory holding exactly the files the app needs at runtime. The app
+// loads its libraries from node_modules, so that directory must be bundled too.
+const srcDir = resolve(baseDir, 'build');
+const outDir = resolve(baseDir, 'builds');
+
+// Files/directories copied into the packaged app.
+const includes = [
+  'index.html',
+  'uri-schemes.html',
+  'package.json',
+  'css',
+  'html',
+  'images',
+  'js',
+  'misc',
+  'hardware',
+  'node_modules',
+];
+
+// NW.js runtime version verified to run FreeWallet on Apple Silicon.
+const version = '0.92.0';
+const flavor = 'normal';
+
+// Build arm64 by default; `--all` also produces the Intel (x64) bundle.
+const arches = process.argv.includes('--all') ? ['arm64', 'x64'] : ['arm64'];
+
+async function stage() {
+  await rm(srcDir, { recursive: true, force: true });
+  await mkdir(srcDir, { recursive: true });
+  for (const item of includes) {
+    await cp(resolve(baseDir, item), resolve(srcDir, item), {
+      recursive: true,
+      verbatimSymlinks: true,
+    });
+  }
+}
+
+await stage();
+
+for (const arch of arches) {
+  const archOutDir = resolve(outDir, `osx-${arch}`);
+  console.log(`### Building FreeWallet for osx-${arch} (NW.js ${version})...`);
+  await nwbuild({
+    srcDir,
+    mode: 'build',
+    version,
+    flavor,
+    platform: 'osx',
+    arch,
+    outDir: archOutDir,
+    glob: false,
+    app: {
+      name: 'FreeWallet',
+      icon: resolve(baseDir, 'images/FreeWallet.icns'),
+      LSApplicationCategoryType: 'public.app-category.finance',
+      CFBundleIdentifier: 'net.freewallet.desktop',
+      CFBundleName: 'FreeWallet',
+      CFBundleDisplayName: 'FreeWallet',
+      CFBundleSpokenName: 'Free Wallet',
+      CFBundleVersion: '2.0.4',
+      CFBundleShortVersionString: '2.0.4',
+      NSHumanReadableCopyright: 'Copyright (c) Jeremy Johnson. MIT License.',
+    },
+  });
+  console.log(`### Done: ${resolve(archOutDir, 'FreeWallet.app')}`);
+}
+
+console.log('all done!');

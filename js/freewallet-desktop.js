@@ -6575,26 +6575,32 @@ function showAssetArtwork(o){
             var el  = $('#video-wrapper'),
                 arr = video.split('.'),
                 ext = arr[arr.length-1].toLowerCase();
+            // video comes from NFT metadata; escape it before it goes into a
+            // src attribute so a crafted value cannot break out and inject HTML.
+            var vsrc = escapeHtml(video);
             if(/youtube/.test(video)){
                 el   = $('#video-wrapper-youtube'),
-                html = '<iframe src="' + video + '" frameborder="0" allowfullscreen class="embedded-video"></iframe>';
+                html = '<iframe src="' + vsrc + '" frameborder="0" allowfullscreen class="embedded-video"></iframe>';
             } else {
                 var type = '';
                 if(ext=='mp4') type = 'video/mp4';
                 if(ext=='wmv') type = 'video/x-ms-asf';
                 if(ext=='mov') type = 'video/quicktime'
-                html = '<video draggable="false" controls playsinline="" autoplay="" loop="" class="img-fluid img-responsive" width="100%" style="max-width:400px"><source type="' + type+ '" src="' + video + '"></video>';
+                html = '<video draggable="false" controls playsinline="" autoplay="" loop="" class="img-fluid img-responsive" width="100%" style="max-width:400px"><source type="' + type+ '" src="' + vsrc + '"></video>';
             }
             el.html(html).show()
         }
         if(audio){
             $('#audio-header').show();
             var el = $('#audio-wrapper');
+            // audio comes from NFT metadata; escape it before it goes into a src
+            // attribute (see the video block above).
+            var asrc = escapeHtml(audio);
             if(/soundcloud/.test(audio)){
                 el = $('#audio-wrapper-soundcloud');
-                html = '<iframe src="https://w.soundcloud.com/player/?url=' + audio + '" frameborder="0" allowfullscreen class="soundcloud-audio" style="width:100%;"></iframe>';
+                html = '<iframe src="https://w.soundcloud.com/player/?url=' + asrc + '" frameborder="0" allowfullscreen class="soundcloud-audio" style="width:100%;"></iframe>';
             } else {
-                html = '<audio src="' + audio + '" autoplay="true" controls loop preload></audio>';
+                html = '<audio src="' + asrc + '" autoplay="true" controls loop preload></audio>';
             }
             el.html(html).show();
         }

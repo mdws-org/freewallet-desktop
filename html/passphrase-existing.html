@@ -61,10 +61,13 @@ $(document).ready(function(){
         if(err){
             dialogMessage(null, err, true);
         } else {
-            resetWallet();
-            createWallet(passphrase, isBip39);
-            dialogClose('dialog-manual-passphrase');
-            dialogMessage('<i class="fa fa-lg fa-fw fa-info-circle"></i> Wallet Updated!', 'Your wallet has been updated to use the passphrase you just entered.', false, false);
+            // A wallet password is mandatory; collect it before creating.
+            dialogNewWalletPassword(function(password){
+                resetWallet();
+                createWallet(passphrase, isBip39, password);
+                dialogClose('dialog-manual-passphrase');
+                dialogMessage('<i class="fa fa-lg fa-fw fa-info-circle"></i> Wallet Updated!', 'Your wallet has been updated to use the passphrase you just entered.', false, false);
+            });
         }
     });
 

@@ -1,0 +1,168 @@
+name: macOS arm64
+
+on:
+  push:
+    branches:
+      - master
+      - ci-macos-arm64
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: arm64-macos-native
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    env:
+      APP: builds/osx-arm64/FreeWallet.app
+      VERIFY_LOG: verification.log
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify runner architecture
+        run: |
+          arch="$(uname -m)"
+          echo "uname -m: $arch"
+          test "$arch" = "arm64"
+          sw_vers
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install build tooling
+        run: |
+          npm install --no-audit --no-fund
+          node -v
+          npm -v
+
+      - name: Build app bundle
+        run: node build.js
+
+      - name: Sign app bundle
+        run: |
+          # Ad-hoc signature. It satisfies the arm64 load-time requirement that
+          # every binary carry one, but it does not satisfy Gatekeeper on a
+          # machine that downloaded the dmg -- that needs a Developer ID
+          # identity and notarisation, which is the only line to change here.
+          codesign --force --deep -s - "$APP"
+
+      - name: Verify bundle
+        run: |
+          fail=0
+          log() { echo "$@" | tee -a "$VERIFY_LOG"; }
+          bin="$APP/Contents/MacOS/FreeWallet"
+
+          log "== bundle layout"
+          test -d "$APP" || { log "FAIL: $APP was not produced"; exit 1; }
+          test -x "$bin" || { log "FAIL: $bin missing or not executable"; exit 1; }
+
+          log "== lipo -archs $bin"
+          archs="$(lipo -archs "$bin")"
+          log "$archs"
+          [ "$archs" = "arm64" ] || { log "FAIL: expected arm64, got '$archs'"; fail=1; }
+
+          log "== Info.plist identity"
+          plist="$APP/Contents/Info.plist"
+          id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")"
+          ver="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
+          log "CFBundleIdentifier: $id"
+          log "CFBundleShortVersionString: $ver"
+          # The fork claims its own identity; inheriting nw-builder's default or
+          # upstream's would let a stray bundle replace this app on a user's disk.
+          [ "$id" = "net.freewallet.desktop" ] || { log "FAIL: unexpected bundle id '$id'"; fail=1; }
+
+          res="$APP/Contents/Resources/app.nw"
+          log "== staged app payload: $res"
+          test -d "$res" || { log "FAIL: app payload missing"; exit 1; }
+
+          # Wallets are encrypted at rest with crypto-js. 3.3.0 carried a critical
+          # advisory; the bundled copy is what actually runs, so assert on the
+          # bundle rather than on the lockfile.
+          cjs="$res/node_modules/crypto-js/package.json"
+          log "== bundled crypto-js"
+          test -f "$cjs" || { log "FAIL: crypto-js is not bundled"; fail=1; }
+          if [ -f "$cjs" ]; then
+            cjsver="$(node -p "require('$PWD/$cjs').version")"
+            log "crypto-js: $cjsver"
+            case "$cjsver" in
+              4.*) log "crypto-js major 4: ok" ;;
+              *) log "FAIL: crypto-js $cjsver is below the required 4.x"; fail=1 ;;
+            esac
+          fi
+
+          # build.js stages production dependencies only. Build tooling inside a
+          # shipped wallet is extra attack surface and megabytes of dead weight.
+          log "== build tooling must not be shipped"
+          for forbidden in nw-builder; do
+            if [ -e "$res/node_modules/$forbidden" ]; then
+              log "FAIL: $forbidden is bundled in the app"
+              fail=1
+            else
+              log "$forbidden: absent (ok)"
+            fi
+          done
+
+          log "== codesign --verify --deep --strict"
+          if codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tee -a "$VERIFY_LOG"; then
+            log "codesign: valid"
+          else
+            log "FAIL: codesign verification failed"
+            fail=1
+          fi
+
+          log "== checking every Mach-O in the bundle for load commands that point outside it"
+          # Only LC_LOAD_DYLIB / LC_LOAD_WEAK_DYLIB / LC_REEXPORT_DYLIB are resolved
+          # at load time; a library's own LC_ID_DYLIB is never looked up.
+          bad=""
+          while IFS= read -r -d '' f; do
+            file "$f" | grep -q Mach-O || continue
+            refs="$(otool -l "$f" \
+                    | awk '/LC_LOAD_DYLIB|LC_LOAD_WEAK_DYLIB|LC_REEXPORT_DYLIB/ {f=1} f && $1 == "name" {print $2; f=0}' \
+                    | grep -E '^(/opt/homebrew|/usr/local|/Users)' || true)"
+            if [ -n "$refs" ]; then
+              bad="$bad$f:"$'\n'"$refs"$'\n'
+            fi
+          done < <(find "$APP" -type f \( -perm -u+x -o -name '*.dylib' \) -print0)
+          if [ -n "$bad" ]; then
+            log "FAIL: unresolved references outside the bundle:"
+            log "$bad"
+            fail=1
+          else
+            log "no references to /opt/homebrew, /usr/local or /Users"
+          fi
+
+          exit "$fail"
+
+      - name: Create dmg
+        run: |
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          short="$(git rev-parse --short "$GITHUB_SHA")"
+          dmg="FreeWallet-${version}-arm64-${short}.dmg"
+          rm -rf dmg-staging && mkdir dmg-staging
+          cp -R "$APP" dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+          hdiutil create -volname "FreeWallet" -srcfolder dmg-staging -ov -format UDZO "$dmg"
+          shasum -a 256 "$dmg" | tee -a "$VERIFY_LOG"
+          echo "DMG=$dmg" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeWallet-arm64-${{ github.sha }}
+          path: |
+            ${{ env.DMG }}
+            ${{ env.VERIFY_LOG }}
+          retention-days: 30
+          if-no-files-found: error

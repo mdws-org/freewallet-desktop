@@ -362,6 +362,7 @@ function resetWallet(){
     ls.removeItem('btcpayMatches');
     ls.removeItem('btcpayQueue');
     ss.removeItem('btcpayWallet');
+    ss.removeItem('btcpayKeys');
     ss.removeItem('wallet');
     ss.removeItem('walletPassword');
     ss.removeItem('skipWalletAuth');
@@ -1065,6 +1066,8 @@ function checkBtcpayAuth(){
     if(enabled && a==null){
         if(b){
             ss.setItem('btcpayWallet',b);
+            // Stash imported keys with the seed (see the enable dialog).
+            ss.setItem('btcpayKeys', JSON.stringify(FW.WALLET_KEYS));
         } else {
             dialogEnableBtcpay();
         }
@@ -1262,6 +1265,12 @@ function autoBtcpay(network, o){
             return;
         } else {
             ss.setItem('wallet',b);
+            // Restore the stashed imported keys so imported-address orders can be
+            // signed while locked; HD addresses re-derive from the seed anyway.
+            var bk = ss.getItem('btcpayKeys');
+            if(bk){
+                try { FW.WALLET_KEYS = JSON.parse(bk); } catch(e){ FW.WALLET_KEYS = {}; }
+            }
             c = true;
         }
     }
@@ -1275,10 +1284,13 @@ function autoBtcpay(network, o){
             removeFromBtcpayQueue(o.tx0_hash, o.tx1_hash);
             setTimeout(function(){ processBtcpayQueue(); },1000);
         }
-        // Handle removing the wallet if needed
-        if(c)
+        // Handle removing the hot-swapped wallet + restored keys if needed, so a
+        // locked session returns to holding no secret in memory after the tx.
+        if(c){
             ss.removeItem('wallet');
-    });      
+            FW.WALLET_KEYS = {};
+        }
+    });
 }
 
 // Handle loading address balance data, saving to memory, and passing to a callback function
@@ -4138,8 +4150,8 @@ function dialogNewWalletPassword( callback ){
                 var pass    = $('[name="wallet_password"]').val(),
                     confirm = $('[name="wallet_confirm_password"]').val(),
                     err     = false;
-                if(pass.length <= 6){
-                    err = 'Wallet password must be at least 7 characters long';
+                if(pass.length < 12){
+                    err = 'Wallet password must be at least 12 characters long';
                 } else if(!/\d/.test(pass)){
                     err = 'Wallet password must contain at least 1 number';
                 } else if(pass != confirm){
@@ -4200,8 +4212,8 @@ function dialogMigrate( callback ){
                 } else {
                     // New password: enforce the same minimum requirements.
                     var confirm = $('[name="wallet_confirm_password"]').val();
-                    if(pass.length <= 6){
-                        err = 'Wallet password must be at least 7 characters long';
+                    if(pass.length < 12){
+                        err = 'Wallet password must be at least 12 characters long';
                     } else if(!/\d/.test(pass)){
                         err = 'Wallet password must contain at least 1 number';
                     } else if(pass != confirm){
@@ -4264,9 +4276,9 @@ function dialogPassword( enable, callback ){
             action: function(dialog){
                 var pass = $('[name="wallet_password"]').val(),
                     err  = false;
-                // Validate that password meets minimum requirements (7 chars, 1 number)
-                if(pass.length <=6){
-                    err = 'Wallet password must be at least 7 characters long';
+                // Validate that password meets minimum requirements (12 chars, 1 number)
+                if(pass.length < 12){
+                    err = 'Wallet password must be at least 12 characters long';
                 } else if(!/\d/.test(pass)){
                     err = 'Wallet password must contain at least 1 number';
                 } else if(enable){
@@ -4877,9 +4889,9 @@ function dialogEnableBtcpay(){
             action: function(dialog){
                 var pass = $('[name="wallet_password"]').val(),
                     err  = false;
-                // Validate that password meets minimum requirements (7 chars, 1 number)
-                if(pass.length <=6){
-                    err = 'Wallet password must be at least 7 characters long';
+                // Validate that password meets minimum requirements (12 chars, 1 number)
+                if(pass.length < 12){
+                    err = 'Wallet password must be at least 12 characters long';
                 } else if(!/\d/.test(pass)){
                     err = 'Wallet password must contain at least 1 number';
                 }
@@ -4892,8 +4904,13 @@ function dialogEnableBtcpay(){
                         // Decrypt wallet and save to btcpayWallet, then re-lock
                         decryptWallet(key);
                         var w = ss.getItem('wallet');
-                        if(w)
+                        if(w){
                             ss.setItem('btcpayWallet',w);
+                            // Stash the imported private keys alongside the seed so
+                            // auto-pay can sign imported-address orders after the
+                            // wallet locks (HD addresses re-derive from the seed).
+                            ss.setItem('btcpayKeys', JSON.stringify(FW.WALLET_KEYS));
+                        }
                         lockWallet();
                         dialog.close();
                         dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Auto-BTCpay Enabled', 'Auto-BTCpay is now enabled and any order matches for BTC will be automatically paid');

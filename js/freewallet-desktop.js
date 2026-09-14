@@ -50,7 +50,7 @@ FW.WALLET_ADDRESSES = JSON.parse(ls.getItem('walletAddresses')) || [];
 //         path: "m/44'/0'/0"       // Node path for address (ex: m/44'/0'/0)
 // }
 FW.WALLET_KEYS      = {}; // Address/Private keys
-FW.WALLET_ENCKEY    = null; // Derived at-rest encryption key (WordArray), held in memory only while unlocked
+FW.WALLET_ENCKEY    = null; // Derived at-rest keyset {enc, mac}, held in memory only while unlocked
 FW.EXCHANGE_MARKETS = {}; // DEX Markets cache
 FW.DISPENSERS       = {}; // Dispensers cache
 
@@ -302,18 +302,21 @@ function loadPage(page){
 
 // Initialize / Load the wallet
 function initWallet(){
-    if(ls.getItem('wallet')){
+    var hasV2 = readVault()!==null,
+        hasV1 = ls.getItem('wallet')!==null; // legacy layout still present (pre-migration or backup)
+    if(hasV2 || hasV1){
         // A stale decrypted copy may linger in session storage from a previous
         // load, but the derived key is memory-only and gone after a reload, so
         // always start locked and require the password. Nothing auto-decrypts.
         ss.removeItem('wallet');
         FW.WALLET_KEYS = {};
         FW.WALLET_ENCKEY = null;
-        if(WalletCrypto.isV2Blob(ls.getItem('wallet'))){
-            // v2 wallet on disk: prompt for the password to unlock.
+        if(hasV2){
+            // v2 vault present (possibly with legacy backup blobs still beside
+            // it): prompt for the password to unlock.
             dialogPassword(false);
         } else {
-            // Legacy v1 wallet on disk: migrate to v2 on unlock.
+            // Only a legacy v1 wallet on disk: migrate to v2 on unlock.
             dialogMigrate();
         }
     } else {
@@ -334,6 +337,7 @@ function initWallet(){
 
 // Reset/Remove wallet
 function resetWallet(){
+    ls.removeItem('walletVault');
     ls.removeItem('wallet');
     ls.removeItem('walletKeys');
     ls.removeItem('walletPassword');
@@ -408,14 +412,13 @@ function createWallet( passphrase, isBip39=false, password ){
         wallet = Mnemonic.fromWords(passphrase.trim().split(" ")).toHex();
     }
     // Derive the at-rest key from the password (PBKDF2), keep it in memory, and
-    // store only the KDF descriptor + verifier -- never the password itself.
+    // store only the KDF descriptor + verifier -- never the password itself. The
+    // descriptor and both encrypted blobs live in one record (writeVault) so the
+    // write is atomic.
     var mk = WalletCrypto.makeCrypto(password);
-    FW.WALLET_ENCKEY = mk.encKey;
-    ls.setItem('walletCrypto', JSON.stringify(mk.descriptor));
+    FW.WALLET_ENCKEY = mk.keyset;
     ss.setItem('wallet', wallet);
-    persistWallet(); // encrypts wallet + (empty) keys under FW.WALLET_ENCKEY
-    ls.setItem('walletEncrypted',1);
-    FW.WALLET_ENCRYPTED = 1;
+    writeVault(mk.descriptor); // encrypts wallet + (empty) keys under FW.WALLET_ENCKEY
     ls.setItem('walletNetwork',1);
     ss.removeItem('skipWalletAuth');
     // Set the wallet format (0 = Counterwallet, 1=BIP39)
@@ -493,57 +496,83 @@ function addNewWalletAddress(net=1, type='normal'){
 }
 
 
-// Decrypt wallet
-// Unlock a v2 wallet with an already-derived encryption key (from
-// WalletCrypto.verifyPassword). Populates the decrypted wallet and keys into
-// session/memory. The password is never stored; only the derived key is held,
-// in memory, for the life of the unlocked session.
-function decryptWallet( encKey ){
-    if(!encKey) encKey = FW.WALLET_ENCKEY;
-    if(!encKey) return false;
-    var wallet   = WalletCrypto.decrypt(ls.getItem('wallet'), encKey),
-        keysBlob = ls.getItem('walletKeys');
-    if(wallet===null) return false;
-    var privkeys = keysBlob ? WalletCrypto.decrypt(keysBlob, encKey) : '{}';
-    if(privkeys===null) return false;
-    FW.WALLET_ENCKEY = encKey;
-    ss.setItem('wallet', wallet);
-    FW.WALLET_KEYS = JSON.parse(privkeys);
-    ss.removeItem('skipWalletAuth');
-    // A successful v2 unlock confirms the current on-disk blobs are good, so any
-    // pre-migration backup kept as a safety net can now be discarded.
-    discardV1Backup();
-    return true;
+// Read and parse the single atomic wallet record. Returns the parsed object
+// {v, crypto, wallet, keys} or null.
+function readVault(){
+    try {
+        var v = ls.getItem('walletVault');
+        return v ? JSON.parse(v) : null;
+    } catch(e){
+        return null;
+    }
 }
 
-// Re-encrypt the in-memory wallet + keys under the current session key and write
-// the v2 blobs to disk. Used on every change (address add/remove, key import)
-// and after a password change. Requires an unlocked session (FW.WALLET_ENCKEY).
-// The legacy signature encryptWallet(password, skip) is preserved for existing
-// callers; both arguments are ignored -- re-encryption always uses the derived
-// session key, never a password.
-function persistWallet(){
-    if(!FW.WALLET_ENCKEY) throw new Error('persistWallet called with no session key');
+// Write the wallet as ONE record: the KDF descriptor plus both authenticated
+// blobs, encrypted under the current session key. A single localStorage write is
+// all-or-nothing, so the descriptor and the ciphertext it applies to can never
+// drift out of sync -- there is no window in which a crash leaves a new key with
+// stale data (the failure mode that would lock a user out of a funded wallet).
+function writeVault( descriptor ){
+    if(!FW.WALLET_ENCKEY) throw new Error('writeVault called with no session key');
     var wallet = getWallet();
     if(wallet===null || wallet===undefined) return false;
-    ls.setItem('wallet', WalletCrypto.encrypt(wallet, FW.WALLET_ENCKEY));
-    ls.setItem('walletKeys', WalletCrypto.encrypt(JSON.stringify(FW.WALLET_KEYS), FW.WALLET_ENCKEY));
+    ls.setItem('walletVault', JSON.stringify({
+        v: 2,
+        crypto: descriptor,
+        wallet: WalletCrypto.encrypt(wallet, FW.WALLET_ENCKEY),
+        keys:   WalletCrypto.encrypt(JSON.stringify(FW.WALLET_KEYS), FW.WALLET_ENCKEY)
+    }));
     ls.setItem('walletEncrypted', 1);
     FW.WALLET_ENCRYPTED = 1;
     ss.removeItem('skipWalletAuth');
     return true;
 }
+
+// Unlock a v2 wallet with an already-derived keyset (from
+// WalletCrypto.verifyPassword). Populates the decrypted wallet and keys into
+// session/memory. The password is never stored; only the derived keyset is held,
+// in memory, for the life of the unlocked session.
+function decryptWallet( keyset ){
+    if(!keyset) keyset = FW.WALLET_ENCKEY;
+    if(!keyset) return false;
+    var v = readVault();
+    if(!v || !v.wallet) return false;
+    var wallet   = WalletCrypto.decrypt(v.wallet, keyset);
+    if(wallet===null) return false;
+    var privkeys = v.keys ? WalletCrypto.decrypt(v.keys, keyset) : '{}';
+    if(privkeys===null) return false;
+    FW.WALLET_ENCKEY = keyset;
+    ss.setItem('wallet', wallet);
+    FW.WALLET_KEYS = JSON.parse(privkeys);
+    ss.removeItem('skipWalletAuth');
+    // A successful v2 unlock confirms the vault is good, so any pre-migration
+    // legacy blobs kept as a safety net can now be discarded.
+    discardV1Backup();
+    return true;
+}
+
+// Re-save the in-memory wallet + keys under the current session key. Used on
+// every change (address add/remove, key import). Requires an unlocked session
+// (FW.WALLET_ENCKEY) and an existing vault whose KDF descriptor is preserved.
+// The legacy signature encryptWallet(password, skip) is preserved for existing
+// callers; both arguments are ignored -- re-encryption always uses the derived
+// session key, never a password.
+function persistWallet(){
+    var v = readVault();
+    if(!v || !v.crypto) throw new Error('persistWallet called with no vault');
+    return writeVault(v.crypto);
+}
 function encryptWallet(){ return persistWallet(); }
 
 // Change the wallet password: derive a new key + descriptor from the new
-// password and re-encrypt everything under it. Requires an unlocked session.
+// password and re-write the whole vault under it in one atomic write. Requires
+// an unlocked session.
 function changeWalletPassword( newPassword ){
     if(!newPassword) throw new Error('changeWalletPassword requires a password');
     if(!getWallet()) return false;
     var mk = WalletCrypto.makeCrypto(newPassword);
-    FW.WALLET_ENCKEY = mk.encKey;
-    ls.setItem('walletCrypto', JSON.stringify(mk.descriptor));
-    return persistWallet();
+    FW.WALLET_ENCKEY = mk.keyset;
+    return writeVault(mk.descriptor);
 }
 
 // Migrate a legacy (v1) wallet to v2 on unlock, backing up the old blobs and
@@ -571,30 +600,31 @@ function migrateWalletToV2( enteredPassword, newPassword ){
     var newPw = wasEncrypted ? enteredPassword : newPassword;
     if(!newPw) return false;
     var mk = WalletCrypto.makeCrypto(newPw),
-        encWallet = WalletCrypto.encrypt(wallet, mk.encKey),
-        encKeys   = WalletCrypto.encrypt(privkeys, mk.encKey);
-    // Verify the new blobs BEFORE replacing the old ones.
-    if(WalletCrypto.decrypt(encWallet, mk.encKey)!==wallet) return false;
-    if(WalletCrypto.decrypt(encKeys, mk.encKey)!==privkeys) return false;
-    // Back up v1, then write v2 and drop the stored password.
-    ls.setItem('wallet.v1bak', ls.getItem('wallet'));
-    ls.setItem('walletKeys.v1bak', keysBlob || '');
-    if(storedPw!==null) ls.setItem('walletPassword.v1bak', storedPw);
-    ls.setItem('wallet', encWallet);
-    ls.setItem('walletKeys', encKeys);
-    ls.setItem('walletCrypto', JSON.stringify(mk.descriptor));
-    ls.setItem('walletEncrypted', 1);
-    ls.removeItem('walletPassword');
-    // Load the migrated wallet into the session.
-    FW.WALLET_ENCKEY = mk.encKey;
+        encWallet = WalletCrypto.encrypt(wallet, mk.keyset),
+        encKeys   = WalletCrypto.encrypt(privkeys, mk.keyset);
+    // Verify the new blobs decrypt back to the identical plaintext BEFORE writing
+    // anything.
+    if(WalletCrypto.decrypt(encWallet, mk.keyset)!==wallet) return false;
+    if(WalletCrypto.decrypt(encKeys, mk.keyset)!==privkeys) return false;
+    // Write the v2 vault as one atomic record. The legacy v1 keys
+    // (wallet/walletKeys/walletPassword) are left in place untouched -- they are
+    // the natural backup, and are removed only on the next successful v2 unlock
+    // (discardV1Backup). So a crash during migration leaves either the intact v1
+    // wallet or a fully-written v2 vault, never a half-migrated wallet.
+    FW.WALLET_ENCKEY = mk.keyset;
     ss.setItem('wallet', wallet);
     FW.WALLET_KEYS = JSON.parse(privkeys);
-    FW.WALLET_ENCRYPTED = 1;
+    writeVault(mk.descriptor);
     return true;
 }
 
-// Discard the pre-migration v1 backup once a v2 unlock has proven the new blobs.
+// Discard the pre-migration legacy (v1) blobs once a v2 unlock has proven the
+// vault. Until then they remain as a rollback path.
 function discardV1Backup(){
+    ls.removeItem('wallet');
+    ls.removeItem('walletKeys');
+    ls.removeItem('walletPassword');
+    // Older layouts wrote separate *.v1bak keys; remove those too if present.
     ls.removeItem('wallet.v1bak');
     ls.removeItem('walletKeys.v1bak');
     ls.removeItem('walletPassword.v1bak');
@@ -814,14 +844,10 @@ function addWalletPrivkey(key){
 // replaces the original check, which decrypted a stored copy of the password --
 // that stored copy was itself the vulnerability and no longer exists.
 function isValidWalletPassword( password ){
-    var desc = ls.getItem('walletCrypto');
-    if(!desc) return false;
-    try {
-        var key = WalletCrypto.verifyPassword(password, JSON.parse(desc));
-        return key ? key : false;
-    } catch(e){
-        return false;
-    }
+    var v = readVault();
+    if(!v || !v.crypto) return false;
+    var key = WalletCrypto.verifyPassword(password, v.crypto);
+    return key ? key : false;
 }
 
 // Validate wallet passphrase

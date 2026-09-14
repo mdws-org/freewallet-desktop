@@ -13,10 +13,14 @@
  * random IV, and stores only a verifier that proves a password without storing
  * it or anything decryptable back into it.
  *
- * Key derivation produces 512 bits: the first 256 are the AES key (never
- * stored), the second 256 are hashed with SHA-256 to form the stored verifier.
- * The two halves are independent outputs of the KDF, so the verifier reveals
- * nothing about the encryption key beyond what brute-forcing the password would.
+ * Key derivation produces 768 bits: bits[0:256] are the AES-CBC key (never
+ * stored), bits[256:512] are the HMAC-SHA256 key used to authenticate each blob
+ * (encrypt-then-MAC), and bits[512:768] are hashed with SHA-256 to form the
+ * stored verifier. The three segments are independent outputs of the KDF, so the
+ * verifier reveals nothing about either key beyond what brute-forcing the
+ * password would, and the MAC gives integrity that raw AES-CBC lacks: a tampered
+ * or wrong-key blob is rejected by a constant-time MAC check before any decrypt,
+ * rather than relying on PKCS#7 padding or a JSON.parse failure to notice.
  *
  * Iterations are stored per wallet (walletCrypto.iter) so the work factor can be
  * raised on a later re-encryption without locking out existing wallets. The
@@ -44,14 +48,35 @@
   var PBKDF2_ITERATIONS = 310000;
   var SALT_BYTES = 16;
   var IV_BYTES = 16;
-  var KDF_BITS = 512; // 256-bit AES key || 256-bit verifier source
+  var KDF_BITS = 768; // 256-bit AES key || 256-bit MAC key || 256-bit verifier source
+  // The KDF parameters are read back from storage, which the threat model treats
+  // as attacker-writable. An unbounded iteration count would let a written blob
+  // make the honest user's unlock block forever (a lockout, with no benefit to an
+  // offline attacker), so read-path parameters are range-checked before use.
+  var MIN_ITERATIONS = 50000;
+  var MAX_ITERATIONS = 2000000;
+
+  // A stored KDF descriptor is only usable if its parameters are well-formed and
+  // within sane bounds. Rejecting here turns a hostile or corrupt blob into a
+  // clean "wrong password" rather than an unbounded synchronous stall.
+  function validParams(descriptor) {
+    return !!descriptor &&
+      descriptor.v === 2 &&
+      Number.isInteger(descriptor.iter) &&
+      descriptor.iter >= MIN_ITERATIONS &&
+      descriptor.iter <= MAX_ITERATIONS &&
+      typeof descriptor.salt === 'string' &&
+      /^[0-9a-fA-F]{32}$/.test(descriptor.salt) &&
+      typeof descriptor.verifier === 'string';
+  }
 
   function randomHex(bytes) {
     return CryptoJS.lib.WordArray.random(bytes).toString(CryptoJS.enc.Hex);
   }
 
-  // Derive the AES key and the verifier from a password and stored KDF params.
-  // Returns WordArrays plus the hex verifier. The password never leaves here.
+  // Derive the AES key, the MAC key, and the verifier from a password and stored
+  // KDF params. Returns a keyset {enc, mac} plus the hex verifier. The password
+  // never leaves here.
   function deriveKeys(password, saltHex, iterations) {
     var salt = CryptoJS.enc.Hex.parse(saltHex);
     var dk = CryptoJS.PBKDF2(password, salt, {
@@ -60,21 +85,22 @@
       hasher: CryptoJS.algo.SHA256
     });
     var words = dk.words;
-    var encKey = CryptoJS.lib.WordArray.create(words.slice(0, 8));      // first 256 bits
-    var verifierSrc = CryptoJS.lib.WordArray.create(words.slice(8, 16)); // second 256 bits
+    var encKey = CryptoJS.lib.WordArray.create(words.slice(0, 8));       // bits[0:256]
+    var macKey = CryptoJS.lib.WordArray.create(words.slice(8, 16));      // bits[256:512]
+    var verifierSrc = CryptoJS.lib.WordArray.create(words.slice(16, 24)); // bits[512:768]
     var verifier = CryptoJS.SHA256(verifierSrc).toString(CryptoJS.enc.Hex);
-    return { encKey: encKey, verifier: verifier };
+    return { enc: encKey, mac: macKey, verifier: verifier };
   }
 
   // Build a fresh KDF descriptor for a new password. Returns the descriptor to
-  // store (walletCrypto) and the live encryption key to use this session.
+  // store (walletCrypto) and the live keyset {enc, mac} to use this session.
   function makeCrypto(password, iterations) {
     var iter = iterations || PBKDF2_ITERATIONS;
     var saltHex = randomHex(SALT_BYTES);
     var d = deriveKeys(password, saltHex, iter);
     return {
       descriptor: { v: 2, kdf: 'pbkdf2-sha256', iter: iter, salt: saltHex, verifier: d.verifier },
-      encKey: d.encKey
+      keyset: { enc: d.enc, mac: d.mac }
     };
   }
 
@@ -87,32 +113,43 @@
   }
 
   // Check a password against a stored walletCrypto descriptor. On success returns
-  // the live encryption key; on failure returns null. No throw, no oracle.
+  // the live keyset {enc, mac}; on failure returns null. No throw, no oracle.
   function verifyPassword(password, descriptor) {
-    if (!descriptor || descriptor.v !== 2) return null;
+    if (!validParams(descriptor)) return null;
     var d = deriveKeys(password, descriptor.salt, descriptor.iter);
-    return hexEqual(d.verifier, descriptor.verifier) ? d.encKey : null;
+    return hexEqual(d.verifier, descriptor.verifier) ? { enc: d.enc, mac: d.mac } : null;
   }
 
-  // Encrypt a UTF-8 string under a derived key. Returns a self-describing blob.
-  function encrypt(plaintext, encKey) {
+  // HMAC-SHA256 over the IV and ciphertext, hex. This authenticates exactly the
+  // bytes stored, so any tampering or a wrong key is caught before decryption.
+  function macTag(macKey, ivHex, ctB64) {
+    return CryptoJS.HmacSHA256(ivHex + '|' + ctB64, macKey).toString(CryptoJS.enc.Hex);
+  }
+
+  // Encrypt a UTF-8 string under a keyset. Returns a self-describing,
+  // authenticated blob (encrypt-then-MAC).
+  function encrypt(plaintext, keyset) {
     var iv = CryptoJS.lib.WordArray.random(IV_BYTES);
-    var ct = CryptoJS.AES.encrypt(plaintext, encKey, {
+    var enc = CryptoJS.AES.encrypt(plaintext, keyset.enc, {
       iv: iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
     });
-    return JSON.stringify({ v: 2, iv: iv.toString(CryptoJS.enc.Hex), ct: ct.ciphertext.toString(CryptoJS.enc.Base64) });
+    var ivHex = iv.toString(CryptoJS.enc.Hex);
+    var ctB64 = enc.ciphertext.toString(CryptoJS.enc.Base64);
+    return JSON.stringify({ v: 2, iv: ivHex, ct: ctB64, mac: macTag(keyset.mac, ivHex, ctB64) });
   }
 
-  // Decrypt a v2 blob. Returns the UTF-8 string, or null if the key is wrong or
-  // the blob is malformed (wrong key surfaces as an empty/garbage decrypt).
-  function decrypt(blob, encKey) {
+  // Decrypt a v2 blob. Verifies the MAC in constant time first and returns null
+  // on any mismatch (wrong key or tampering) or malformed input, before touching
+  // the ciphertext; otherwise returns the UTF-8 plaintext.
+  function decrypt(blob, keyset) {
     try {
       var o = (typeof blob === 'string') ? JSON.parse(blob) : blob;
-      if (!o || o.v !== 2 || !o.iv || !o.ct) return null;
+      if (!o || o.v !== 2 || !o.iv || !o.ct || !o.mac) return null;
+      if (!hexEqual(o.mac, macTag(keyset.mac, o.iv, o.ct))) return null;
       var params = CryptoJS.lib.CipherParams.create({
         ciphertext: CryptoJS.enc.Base64.parse(o.ct)
       });
-      var pt = CryptoJS.AES.decrypt(params, encKey, {
+      var pt = CryptoJS.AES.decrypt(params, keyset.enc, {
         iv: CryptoJS.enc.Hex.parse(o.iv), mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
       });
       var s = pt.toString(CryptoJS.enc.Utf8);
@@ -125,7 +162,7 @@
   function isV2Blob(blob) {
     if (typeof blob !== 'string') return false;
     if (blob.charAt(0) !== '{') return false;
-    try { var o = JSON.parse(blob); return o && o.v === 2 && !!o.iv && !!o.ct; } catch (e) { return false; }
+    try { var o = JSON.parse(blob); return o && o.v === 2 && !!o.iv && !!o.ct && !!o.mac; } catch (e) { return false; }
   }
 
   // --- v1 (legacy) read path, used only during migration -------------------
@@ -162,6 +199,7 @@
     encrypt: encrypt,
     decrypt: decrypt,
     isV2Blob: isV2Blob,
+    validParams: validParams,
     decryptV1: decryptV1,
     legacyConveniencePassword: legacyConveniencePassword,
     legacyVerify: legacyVerify,

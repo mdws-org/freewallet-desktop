@@ -18,7 +18,7 @@ const WC = (function () {
   return m.exports;
 })();
 
-const ITER = 2000; // fast for tests; correctness is iteration-independent
+const ITER = 50000; // the minimum the production validator accepts; correctness is iteration-independent
 let n = 0;
 function ok(name) { n++; console.log('  ok', name); }
 
@@ -29,24 +29,33 @@ function ok(name) { n++; console.log('  ok', name); }
   const keys = JSON.stringify({ '1abc': 'Kx...priv', '1def': 'L2...priv' });
 
   const made = WC.makeCrypto(pw, ITER);
-  const encWallet = WC.encrypt(wallet, made.encKey);
-  const encKeys = WC.encrypt(keys, made.encKey);
+  const encWallet = WC.encrypt(wallet, made.keyset);
+  const encKeys = WC.encrypt(keys, made.keyset);
 
-  assert.strictEqual(WC.decrypt(encWallet, made.encKey), wallet);
-  assert.strictEqual(WC.decrypt(encKeys, made.encKey), keys);
+  assert.strictEqual(WC.decrypt(encWallet, made.keyset), wallet);
+  assert.strictEqual(WC.decrypt(encKeys, made.keyset), keys);
   ok('round-trip wallet + keys');
 
   // verifier proves the password
   const good = WC.verifyPassword(pw, made.descriptor);
-  assert.ok(good, 'correct password verifies');
+  assert.ok(good && good.enc && good.mac, 'correct password verifies to a keyset');
   assert.strictEqual(WC.decrypt(encWallet, good), wallet);
-  ok('verifyPassword returns a working key');
+  ok('verifyPassword returns a working keyset');
 
-  // wrong password: no verify, and even a forced decrypt yields null
+  // wrong password: no verify, and a forced decrypt with a wrong keyset is null
   assert.strictEqual(WC.verifyPassword('wrong 7', made.descriptor), null);
-  const wrongKey = WC.deriveKeys('wrong 7', made.descriptor.salt, made.descriptor.iter).encKey;
-  assert.strictEqual(WC.decrypt(encWallet, wrongKey), null);
-  ok('wrong password rejected, wrong-key decrypt is null');
+  const wrong = WC.deriveKeys('wrong 7', made.descriptor.salt, made.descriptor.iter);
+  assert.strictEqual(WC.decrypt(encWallet, { enc: wrong.enc, mac: wrong.mac }), null);
+  ok('wrong password rejected, wrong-keyset decrypt is null');
+
+  // authentication: a tampered ciphertext or IV is rejected by the MAC
+  const blob = JSON.parse(encWallet);
+  const flip = (s) => s.slice(0, -2) + (s.slice(-2) === 'AA' ? 'AB' : 'AA');
+  assert.strictEqual(WC.decrypt(JSON.stringify({ ...blob, ct: flip(blob.ct) }), made.keyset), null);
+  assert.strictEqual(WC.decrypt(JSON.stringify({ ...blob, mac: flip(blob.mac) }), made.keyset), null);
+  // a valid enc key but a wrong mac key must still be rejected before decrypt
+  assert.strictEqual(WC.decrypt(encWallet, { enc: made.keyset.enc, mac: wrong.mac }), null);
+  ok('tampered ct / tampered mac / wrong mac-key all rejected (encrypt-then-MAC)');
 })();
 
 // --- the stored descriptor leaks nothing decryptable ----------------------
@@ -57,11 +66,24 @@ function ok(name) { n++; console.log('  ok', name); }
   // descriptor must not contain the password or the AES key in any field
   const blob = JSON.stringify(d);
   assert.ok(blob.indexOf(pw) === -1, 'descriptor does not contain password');
-  const encKeyHex = made.encKey.toString(C.enc.Hex);
+  const encKeyHex = made.keyset.enc.toString(C.enc.Hex);
+  const macKeyHex = made.keyset.mac.toString(C.enc.Hex);
   assert.ok(blob.indexOf(encKeyHex) === -1, 'descriptor does not contain the AES key');
-  // verifier is SHA256 of the *second* KDF half; it is not the enc key
+  assert.ok(blob.indexOf(macKeyHex) === -1, 'descriptor does not contain the MAC key');
+  // verifier is SHA256 of the *third* KDF segment; it is neither key
   assert.notStrictEqual(d.verifier, encKeyHex);
-  ok('descriptor leaks neither password nor encryption key');
+  assert.notStrictEqual(d.verifier, macKeyHex);
+  ok('descriptor leaks neither password nor either key');
+
+  // read-path parameters are range-checked: a hostile blob cannot force an
+  // unbounded PBKDF2 stall, and malformed params are a clean reject, not a throw
+  const base = WC.makeCrypto('bounds pw 3', ITER).descriptor;
+  assert.strictEqual(WC.verifyPassword('bounds pw 3', { ...base, iter: 1e12 }), null, 'absurd iter rejected');
+  assert.strictEqual(WC.verifyPassword('bounds pw 3', { ...base, iter: -1 }), null, 'negative iter rejected');
+  assert.strictEqual(WC.verifyPassword('bounds pw 3', { ...base, iter: 3.5 }), null, 'non-integer iter rejected');
+  assert.strictEqual(WC.verifyPassword('bounds pw 3', { ...base, salt: 'zz' }), null, 'malformed salt rejected');
+  assert.strictEqual(WC.verifyPassword('bounds pw 3', { ...base, v: 1 }), null, 'wrong version rejected');
+  ok('malicious/malformed KDF params rejected without deriving');
 })();
 
 // --- legacy v1 formats decrypt (what migration reads) ---------------------
@@ -90,11 +112,12 @@ function ok(name) { n++; console.log('  ok', name); }
 // app will use, asserting the safety property: the old blob is only discarded
 // after the new one is verified to decrypt back to the identical plaintext.
 (function () {
+  // Mirrors the app: migration writes ONE atomic walletVault record and leaves
+  // the legacy v1 keys (wallet/walletKeys/walletPassword) in place as the backup;
+  // a successful v2 unlock removes them.
   function migrate(store, enteredPassword, newPasswordForConvenience) {
     const wasEncrypted = parseInt(store.walletEncrypted) === 1;
-    // 1. recover the plaintext from v1
     if (wasEncrypted) {
-      // verify the entered password against the legacy oracle before trusting it
       if (!WC.legacyVerify(enteredPassword, store.walletPassword)) return { error: 'bad password' };
     }
     const v1pw = wasEncrypted ? enteredPassword : WC.legacyConveniencePassword(store.walletPassword);
@@ -102,38 +125,28 @@ function ok(name) { n++; console.log('  ok', name); }
     const keys = WC.decryptV1(store.walletKeys, v1pw);
     if (wallet === null || keys === null) return { error: 'v1 decrypt failed' };
 
-    // 2. the new password: existing one if already encrypted, else user's new one
     const newPw = wasEncrypted ? enteredPassword : newPasswordForConvenience;
     const made = WC.makeCrypto(newPw, ITER);
-    const encWallet = WC.encrypt(wallet, made.encKey);
-    const encKeys = WC.encrypt(keys, made.encKey);
+    const encWallet = WC.encrypt(wallet, made.keyset);
+    const encKeys = WC.encrypt(keys, made.keyset);
+    // verify the new blobs BEFORE writing anything
+    if (WC.decrypt(encWallet, made.keyset) !== wallet) return { error: 'verify wallet failed' };
+    if (WC.decrypt(encKeys, made.keyset) !== keys) return { error: 'verify keys failed' };
 
-    // 3. verify the new blobs BEFORE touching the old ones
-    if (WC.decrypt(encWallet, made.encKey) !== wallet) return { error: 'verify wallet failed' };
-    if (WC.decrypt(encKeys, made.encKey) !== keys) return { error: 'verify keys failed' };
-
-    // 4. back up v1, write v2, drop the cleartext password
-    store['wallet.v1bak'] = store.wallet;
-    store['walletKeys.v1bak'] = store.walletKeys;
-    store['walletPassword.v1bak'] = store.walletPassword;
-    store.wallet = encWallet;
-    store.walletKeys = encKeys;
-    store.walletCrypto = JSON.stringify(made.descriptor);
-    store.walletEncrypted = 1;
-    delete store.walletPassword;
+    // one atomic write; legacy keys untouched (the backup)
+    store.walletVault = JSON.stringify({ v: 2, crypto: made.descriptor, wallet: encWallet, keys: encKeys });
     return { ok: true, plaintext: { wallet, keys } };
   }
 
   function unlockV2(store, password) {
-    const desc = JSON.parse(store.walletCrypto);
-    const key = WC.verifyPassword(password, desc);
+    const v = JSON.parse(store.walletVault);
+    const key = WC.verifyPassword(password, v.crypto);
     if (!key) return { error: 'bad password' };
-    const wallet = WC.decrypt(store.wallet, key);
-    const keys = WC.decrypt(store.walletKeys, key);
-    // safe to discard backups now that a v2 unlock succeeded
-    delete store['wallet.v1bak'];
-    delete store['walletKeys.v1bak'];
-    delete store['walletPassword.v1bak'];
+    const wallet = WC.decrypt(v.wallet, key);
+    const keys = WC.decrypt(v.keys, key);
+    if (wallet === null || keys === null) return { error: 'vault decrypt failed' };
+    // safe to discard the legacy backup now that a v2 unlock succeeded
+    delete store.wallet; delete store.walletKeys; delete store.walletPassword;
     return { ok: true, wallet, keys };
   }
 
@@ -150,16 +163,16 @@ function ok(name) { n++; console.log('  ok', name); }
     };
     const m = migrate(store, null, 'chosen new pw 5');
     assert.ok(m.ok, 'convenience migrate ok');
-    assert.strictEqual(store.walletPassword, undefined, 'cleartext password removed');
-    assert.ok(WC.isV2Blob(store.wallet), 'wallet now v2');
-    assert.ok(store['wallet.v1bak'], 'v1 backup retained until next unlock');
-    // old password no longer opens it; the new one does
-    assert.strictEqual(WC.verifyPassword(cpw, JSON.parse(store.walletCrypto)), null);
+    assert.ok(WC.isV2Blob(JSON.parse(store.walletVault).wallet), 'vault holds a v2 blob');
+    assert.ok(store.wallet && store.walletPassword, 'legacy backup retained until next unlock');
+    // old password no longer opens the vault; the new one does
+    assert.strictEqual(WC.verifyPassword(cpw, JSON.parse(store.walletVault).crypto), null);
     const u = unlockV2(store, 'chosen new pw 5');
     assert.strictEqual(u.wallet, wallet);
     assert.strictEqual(u.keys, keys);
-    assert.strictEqual(store['wallet.v1bak'], undefined, 'backup discarded after successful v2 unlock');
-    ok('convenience wallet migrated, backup discarded after verified unlock');
+    assert.strictEqual(store.wallet, undefined, 'legacy backup discarded after successful v2 unlock');
+    assert.strictEqual(store.walletPassword, undefined, 'cleartext password gone after unlock');
+    ok('convenience wallet migrated (atomic vault), backup discarded after verified unlock');
   }
 
   // Case B: already user-encrypted wallet keeps its password
@@ -174,32 +187,51 @@ function ok(name) { n++; console.log('  ok', name); }
       walletEncrypted: 1
     };
     assert.deepStrictEqual(migrate(store, 'WRONG', null), { error: 'bad password' });
-    assert.ok(store.walletCrypto === undefined, 'failed migrate left wallet untouched');
+    assert.strictEqual(store.walletVault, undefined, 'failed migrate wrote no vault');
     const m = migrate(store, upw, null);
     assert.ok(m.ok, 'encrypted migrate ok with correct password');
     const u = unlockV2(store, upw);
     assert.strictEqual(u.wallet, wallet);
-    ok('user-encrypted wallet migrated, same password still opens it');
+    ok('user-encrypted wallet migrated (atomic vault), same password still opens it');
   }
 
-  // Case C: a corrupted new blob would abort BEFORE discarding v1 (safety)
+  // Case C: a corrupted new blob aborts BEFORE any vault is written (safety)
   {
-    // simulate by verifying the guard: if verify fails, old blobs stay.
     const store = {
       wallet: C.AES.encrypt('X', 'p9').toString(),
       walletKeys: C.AES.encrypt('{}', 'p9').toString(),
       walletPassword: 'p9', walletEncrypted: 0
     };
     const before = store.wallet;
-    // monkeypatch encrypt to corrupt output, proving the guard trips
     const realEncrypt = WC.encrypt;
-    WC.encrypt = () => JSON.stringify({ v: 2, iv: '00', ct: 'AAAA' });
+    WC.encrypt = () => JSON.stringify({ v: 2, iv: '00', ct: 'AAAA', mac: '00' });
     const m = migrate(store, null, 'newpw 1');
     WC.encrypt = realEncrypt;
     assert.ok(m.error, 'corrupted new blob aborts migration');
-    assert.strictEqual(store.wallet, before, 'old wallet blob preserved on failed verify');
-    assert.strictEqual(store['wallet.v1bak'], undefined, 'no backup written on aborted migration');
+    assert.strictEqual(store.wallet, before, 'legacy wallet blob preserved on failed verify');
+    assert.strictEqual(store.walletVault, undefined, 'no vault written on aborted migration');
     ok('migration aborts and preserves v1 when the new blob fails verification');
+  }
+
+  // Case D: atomicity -- the whole vault is one record, so a change to the
+  // password can never leave the descriptor and ciphertext out of sync.
+  {
+    const wallet = 'HDWALLETHEX-D';
+    const made = WC.makeCrypto('first pw 1', ITER);
+    let store = { walletVault: JSON.stringify({ v: 2, crypto: made.descriptor,
+      wallet: WC.encrypt(wallet, made.keyset), keys: WC.encrypt('{}', made.keyset) }) };
+    // change password = build a brand-new vault object and assign in one step
+    const mk2 = WC.makeCrypto('second pw 2', ITER);
+    const newVault = JSON.stringify({ v: 2, crypto: mk2.descriptor,
+      wallet: WC.encrypt(wallet, mk2.keyset), keys: WC.encrypt('{}', mk2.keyset) });
+    store.walletVault = newVault; // single assignment == atomic setItem
+    const parsed = JSON.parse(store.walletVault);
+    // descriptor and ciphertext are from the same key: new password verifies AND decrypts
+    const key = WC.verifyPassword('second pw 2', parsed.crypto);
+    assert.ok(key, 'new password verifies against the record it was written with');
+    assert.strictEqual(WC.decrypt(parsed.wallet, key), wallet, 'and decrypts the ciphertext in the same record');
+    assert.strictEqual(WC.verifyPassword('first pw 1', parsed.crypto), null, 'old password no longer verifies');
+    ok('password change is a single atomic record: descriptor and ciphertext never drift');
   }
 })();
 

@@ -13,8 +13,10 @@ const ok = (m) => { n++; console.log('  ok', m); };
 
 // --- ReDoS: the old regex vs the new URL()-based check ---------------------
 (function () {
-  // The old pattern (kept here only to demonstrate the hang it caused).
-  const oldPattern = /^(https?:\/\/)?((([a-z\d]([a-z\d-]*[a-z\d])*)\.)+[a-z]{2,}|((\d{1,3}\.){3}\d{1,3}))(\:\d+)?(\/[-a-z\d%_.~+]*)*(\?[;&a-z\d%_.~+=-]*)?(\#[-a-z\d_]*)?$/i;
+  // The pattern this replaced was an unanchored host regex with nested
+  // quantifiers -- (([a-z\d]([a-z\d-]*[a-z\d])*)\.)+ -- which backtracks
+  // catastrophically. It is described rather than reproduced here so the
+  // vulnerable expression does not live on in the tree.
   function isValidURL(str) {
     try { const u = new URL(String(str)); return u.protocol === 'http:' || u.protocol === 'https:'; }
     catch (e) { return false; }

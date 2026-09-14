@@ -6273,7 +6273,7 @@ function showExtendedInfo(o){
     if(o.website){
         var url = getValidUrl(o.website);
         if(isValidUrl(url)){
-            $('#assetWebsite').html('<a href="' + url + '" target="_blank">' + url + '</a>').parent().show();        
+            $('#assetWebsite').html('<a href="' + escapeHtml(url) + '" target="_blank">' + escapeHtml(url) + '</a>').parent().show();        
         } else {
             $('#assetWebsite').text(o.website).parent().show();
         }
@@ -6281,7 +6281,7 @@ function showExtendedInfo(o){
     if(o.pgpsig){
         var url = o.pgpsig;
         if(isValidUrl(url)){
-            $('#pgpSignature').html('<a href="' + url + '" target="_blank">' + url + '</a>').parent().show();        
+            $('#pgpSignature').html('<a href="' + escapeHtml(url) + '" target="_blank">' + escapeHtml(url) + '</a>').parent().show();        
         } else {
             $('#pgpSignature').text(o.pgpsig).parent().show();
         }
@@ -6303,9 +6303,9 @@ function showExtendedInfo(o){
             el    = $('#assetExtendedDescription');
         if(json.test(desc)||http.test(desc)||https.test(desc)){
             var arr  = desc.split(';'),
-                html = '<a href="' + getValidUrl(arr[0]) + '" target="_blank">' + arr[0] + '</a>';
+                html = '<a href="' + escapeHtml(getValidUrl(arr[0])) + '" target="_blank">' + escapeHtml(arr[0]) + '</a>';
             if(arr[1])
-                html += ';' + arr[1];
+                html += ';' + escapeHtml(arr[1]);
             el.html(html);
         } else {
             el.text(desc);
@@ -6327,13 +6327,15 @@ function showExtendedInfo(o){
         table.empty();
         o.contacts.slice(0,10).forEach(function(item){
             var type = item.type.toLowerCase(),
-                html = '<tr><th>' + item.type + '</th><td>' + item.data + '</td></tr>';
+                t    = escapeHtml(item.type),
+                d    = escapeHtml(item.data),
+                html = '<tr><th>' + t + '</th><td>' + d + '</td></tr>';
             if(type=='email')
-                html = '<tr><th>' + item.type + '</th><td><a href="mailto:'+ item.data + '">' + item.data + '</a></td></tr>'
+                html = '<tr><th>' + t + '</th><td><a href="mailto:'+ encodeURIComponent(item.data) + '">' + d + '</a></td></tr>'
             if(type=='phone'||type=='fax')
-                html = '<tr><th>' + item.type + '</th><td><a href="tel:'+ item.data + '">' + item.data + '</a></td></tr>'
+                html = '<tr><th>' + t + '</th><td><a href="tel:'+ encodeURIComponent(item.data) + '">' + d + '</a></td></tr>'
             if(type=='url')
-                html = '<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>'
+                html = '<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>'
             table.append(html);
         });
         $('#contactInfo').show();
@@ -6343,7 +6345,7 @@ function showExtendedInfo(o){
         var table = $('#socialInfo table tbody');
         table.empty();
         o.social.slice(0,10).forEach(function(item){
-            table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            table.append('<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>');
         });
         $('#socialInfo').show();
     }
@@ -6355,10 +6357,10 @@ function showExtendedInfo(o){
         o.images.slice(0,10).forEach(function(item){
             if(item.data.substring(0,4)=='data')
                 return;
-            html = '<tr><th>' + item.type;
+            html = '<tr><th>' + escapeHtml(item.type);
             if(item.size)
-                html += ' (' + item.size + ')';
-            html += '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>';
+                html += ' (' + escapeHtml(item.size) + ')';
+            html += '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>';
             table.append(html);
         });
         if(html)
@@ -6369,7 +6371,7 @@ function showExtendedInfo(o){
         var table = $('#audioInfo table tbody');
         table.empty();
         o.audio.slice(0,10).forEach(function(item){
-            table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            table.append('<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>');
         });
         $('#audioInfo').show();
     }
@@ -6378,7 +6380,7 @@ function showExtendedInfo(o){
         var table = $('#videoInfo table tbody');
         table.empty();
         o.video.slice(0,10).forEach(function(item){
-            table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            table.append('<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>');
         });
         $('#videoInfo').show();
     }
@@ -6387,7 +6389,7 @@ function showExtendedInfo(o){
         var table = $('#fileInfo table tbody');
         table.empty();
         o.files.slice(0,10).forEach(function(item){
-            table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            table.append('<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>');
         });
         $('#fileInfo').show();
     }
@@ -6397,9 +6399,9 @@ function showExtendedInfo(o){
         table.empty();
         table.append('<tr><th>Type</th><th>Host</th><th>Value</th></tr>')
         o.dns.slice(0,10).forEach(function(item){
-            var html = '<tr><td>' + item.type + '</td><td>' + item.host + '</td><td>' + item.value + '</td></tr>';
+            var html = '<tr><td>' + escapeHtml(item.type) + '</td><td>' + escapeHtml(item.host) + '</td><td>' + escapeHtml(item.value) + '</td></tr>';
             if(item.type.toLowerCase()=='btcdns')
-                html = '<tr><td>' + item.type + '</td><td colspan="2"><a href="'+ getValidUrl(item.value) + '" target="_blank">' + item.value + '</a></td></tr>';
+                html = '<tr><td>' + escapeHtml(item.type) + '</td><td colspan="2"><a href="'+ escapeHtml(getValidUrl(item.value)) + '" target="_blank">' + escapeHtml(item.value) + '</a></td></tr>';
             table.append(html);
         });
         $('#dnsInfo').show();

@@ -11,7 +11,7 @@ const assert = require('assert');
 let n = 0;
 const ok = (m) => { n++; console.log('  ok', m); };
 
-// --- ReDoS: the old regex vs the new URL()-based check ---------------------
+// --- ReDoS: linear URL validation ------------------------------------------
 (function () {
   // The pattern this replaced was an unanchored host regex with nested
   // quantifiers -- (([a-z\d]([a-z\d-]*[a-z\d])*)\.)+ -- which backtracks

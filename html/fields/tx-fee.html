@@ -65,11 +65,11 @@ function displayMinersFeeInfo(){
     // Display the Transaction Size
     html += '<div class="input-group pull-left" id="fee-size-wrapper" style="width:120px;">' +
                 '<div class="input-group-addon" id="">Size</div>' +
-                '<input type="text" class="form-control" name="fee-size"  id="fee-size" placeholder="100" readonly value="' + size + '">' +
+                '<input type="text" class="form-control" name="fee-size"  id="fee-size" placeholder="100" readonly value="' + escapeHtml(size) + '">' +
             '</div>';
     // Display the Transaction Fee
     html += '<div class="input-group pull-left" id="fee-sats-wrapper" style="width:130px;margin-left: 15px">' +
-                '<input type="text" class="form-control" name="fee-sats"  id="fee-sats" placeholder="100" readonly value="' + rate + '">' +
+                '<input type="text" class="form-control" name="fee-sats"  id="fee-sats" placeholder="100" readonly value="' + escapeHtml(rate) + '">' +
                 '<div class="input-group-addon" id="">sat/vB</div>' +
             '</div>';
     $('#transaction-status').removeClass('red green').html(html);

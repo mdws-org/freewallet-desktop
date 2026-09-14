@@ -2108,8 +2108,8 @@ function loadAssetInfo(asset){
         resetAssetInfo();
         // Name & Icon
         $('#asset-name').text(asset);
-        $('#asset-icon').attr('src', FW.EXPLORER_API + '/icon/' + icon + '.png');
-        $('#asset-info-more').attr('href', FW.EXPLORER_API + '/asset/' + asset);
+        $('#asset-icon').attr('src', FW.EXPLORER_API + '/icon/' + encodeURIComponent(icon) + '.png');
+        $('#asset-info-more').attr('href', FW.EXPLORER_API + '/asset/' + encodeURIComponent(asset));
         // Estimated Value
         var val = balance.estimated_value;
         $('#asset-value-btc').text(numeral(val.btc).format('0,0.00000000'));
@@ -2329,13 +2329,18 @@ function updateAddressList(){
                     cls += ' striped'
                     cnt = 0;
                 }
-                var label   = item.label,
-                    address = item.address,
-                    id      = item.address;
+                // Escape everything user-controlled before it is concatenated
+                // into the list markup (address labels are user-set). The search
+                // highlight then wraps the escaped filter around the escaped
+                // text, so neither the label nor the filter can inject HTML.
+                var label   = escapeHtml(item.label),
+                    address = escapeHtml(item.address),
+                    id      = escapeHtml(item.address);
                 // Highlight the filter/search
                 if(filter){
-                    label   = label.replace(filter,'<span class="highlight-search-term">' + filter + '</span>');
-                    address = address.replace(filter,'<span class="highlight-search-term">' + filter + '</span>');
+                    var f = escapeHtml(filter);
+                    label   = label.replace(f,'<span class="highlight-search-term">' + f + '</span>');
+                    address = address.replace(f,'<span class="highlight-search-term">' + f + '</span>');
                 }
                 var btc = getAddressBalance(address, 'BTC'),
                     xcp = getAddressBalance(address, 'XCP'),
@@ -3890,7 +3895,7 @@ function dialogViewAddress(address){
             var msg = $('<div class="text-center"></div>');
             addr = (address) ? address : getWalletAddress();
             msg.qrcode({ text: addr });
-            msg.append('<div style="margin-top:10px" class="btc-wallet-blackbox" id="viewAddress">' + addr + '</div>');
+            msg.append('<div style="margin-top:10px" class="btc-wallet-blackbox" id="viewAddress">' + escapeHtml(addr) + '</div>');
             return msg;
         },
         buttons:[{
@@ -6071,6 +6076,19 @@ function stripHtml(html){
     return tmp.textContent || tmp.innerText || "";
 }
 
+// Escape a value for safe interpolation into an HTML string (text or a
+// double-quoted attribute). Use this whenever wallet data -- address labels,
+// asset names, anything a user or a remote API can influence -- is concatenated
+// into markup that is later handed to .html()/.append().
+function escapeHtml(str){
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // Function to handle converting any JSON to use the CIP25 standard
 // https://github.com/CounterpartyXCP/cips/blob/master/cip-0025.md
 function legacyJsonToCip25(o){
@@ -6155,7 +6173,7 @@ function legacyJsonToCip25(o){
     if(urls){
         urls.forEach(function(str){
             var [url, qs] = String(str).split('?'),
-                url   = url.replace('"',''),
+                url   = url.replace(/"/g,''),
                 arr   = url.split('.'),
                 ext   = arr[arr.length-1].toLowerCase(),
                 found = false;
@@ -6206,9 +6224,11 @@ function legacyJsonToCip25(o){
         });
         if(html)
             json.html = json.description;
-        // Remove any attempts to inject HTML or javascript via description field
-        var desc = String(json.description).replace('&lt;','<').replace('&gt;','>').replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,'').trim();
-        json.description = stripHtml(desc);
+        // Reduce the description to plain text. A hand-rolled entity-unescape
+        // plus a <script> regex is fragile (it missed "</script >" and only
+        // replaced the first entity, and unescaping before stripping re-armed
+        // tags); DOM textContent strips every tag reliably in one step.
+        json.description = stripHtml(String(json.description)).trim();
     }
     // console.log('--- Begin CIP25 JSON ---');
     // console.log(JSON.stringify(json));

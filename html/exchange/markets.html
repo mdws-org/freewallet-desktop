@@ -252,7 +252,7 @@ $(document).ready(function(){
     // Filter datatable results as user types search string
     $('#markets-query').keyup($.debounce(100,function(e){ 
         var code  = (e.keyCode) ? e.keyCode : e.which,
-            query = $(this).val().replace('\\','/').toUpperCase();
+            query = $(this).val().replace(/\\/g,'/').toUpperCase();
         FW.BASE_MARKETS.forEach(function(market){
             var table = $('#' + market + ' table.datatable').DataTable();
             table.search( query ).draw();
@@ -264,7 +264,7 @@ $(document).ready(function(){
 
     // When user clicks 'Search' button, try to determine what user is searching for
     $('#markets-search').click($.debounce(100,function(e){ 
-        var query = $('#markets-query').val().replace('\\','/').toUpperCase();
+        var query = $('#markets-query').val().replace(/\\/g,'/').toUpperCase();
         if(query.indexOf('/')!=-1)
             openMarket(query);
     }));

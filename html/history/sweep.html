@@ -67,17 +67,17 @@
         // Request transaction information from explorer API
         $.getJSON(FW.EXPLORER_API + '/api/tx/' + tx, function( o ){
             if(!o.error){
-                $('#source').html(o.source);
-                $('#destination').html(o.destination);
+                $('#source').text(o.source);
+                $('#destination').text(o.destination);
                 var net = (testnet) ? '/testnet' : '';
-                $('#tx-hash').html(o.tx_hash);
+                $('#tx-hash').text(o.tx_hash);
                 $('#memo').text(o.memo);
                 $('#flags').text(o.flags);
                 $('#status').text(o.status);
                 $('#fee').text(o.fee + ' XCP');
-                $('#timestamp').html('<span data-livestamp='  + o.timestamp + ' class="nowrap"></span> (' + moment.unix(o.timestamp).utcOffset(0).format() + ' GMT)');
+                $('#timestamp').html('<span data-livestamp="' + escapeHtml(o.timestamp) + '" class="nowrap"></span> (' + moment.unix(o.timestamp).utcOffset(0).format() + ' GMT)');
                 if(o.tx_index){
-                    $('#block').html(numeral(o.block_index).format('0,0'));
+                    $('#block').text(numeral(o.block_index).format('0,0'));
                     $('#tx-index').text(numeral(o.tx_index).format('0,0'));
                 } else {
                     $('#block').text('-');

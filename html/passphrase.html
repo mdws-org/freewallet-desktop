@@ -54,9 +54,12 @@ $(document).ready(function(){
     // Handle verifying that the user clicked the confirmation button
     $('#btn-ok').click(function(){
         if($('#dialog-new-passphrase-checkbox').is(':checked')){
-            resetWallet();
-            createWallet(passphrase, isBip39);
-            dialogClose('dialog-new-passphrase');
+            // A wallet password is mandatory; collect it before creating.
+            dialogNewWalletPassword(function(password){
+                resetWallet();
+                createWallet(passphrase, isBip39, password);
+                dialogClose('dialog-new-passphrase');
+            });
         } else {
             $('#dialog-new-passphrase-confirm').effect( "shake", { times: 3, direction: 'up' }, 1000);
         }

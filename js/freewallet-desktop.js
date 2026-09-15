@@ -4229,7 +4229,20 @@ function dialogMigrate( callback ){
                     dialog.close();
                     FW.WALLET_LAST_UNLOCKED = Date.now();
                     updateWalletOptions();
-                    dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet ready', 'Your wallet encryption has been upgraded and your wallet is unlocked.');
+                    // A wallet that already had a password keeps it, so it can be
+                    // shorter than the minimum now required of a new one. The
+                    // upgrade is not blocked on changing it -- that would stop a
+                    // user mid-migration -- but the weaker password limits what
+                    // the stronger key derivation can do, so say so.
+                    if(wasEncrypted && pass.length < 12){
+                        dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet ready',
+                            'Your wallet encryption has been upgraded and your wallet is unlocked.' +
+                            '<br/><br/><b>Your password is shorter than the ' + 12 + ' characters now required for a new wallet.</b> ' +
+                            'It still works, but a longer password would make the new encryption meaningfully harder to attack. ' +
+                            'You can change it from the wallet settings.');
+                    } else {
+                        dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet ready', 'Your wallet encryption has been upgraded and your wallet is unlocked.');
+                    }
                     if(typeof callback=='function') callback();
                 }
             }

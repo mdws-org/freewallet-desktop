@@ -2226,8 +2226,8 @@ function loadAssetInfo(asset){
         resetAssetInfo();
         // Name & Icon
         $('#asset-name').text(asset);
-        $('#asset-icon').attr('src', FW.EXPLORER_API + '/icon/' + icon + '.png');
-        $('#asset-info-more').attr('href', FW.EXPLORER_API + '/asset/' + asset);
+        $('#asset-icon').attr('src', FW.EXPLORER_API + '/icon/' + encodeURIComponent(icon) + '.png');
+        $('#asset-info-more').attr('href', FW.EXPLORER_API + '/asset/' + encodeURIComponent(asset));
         // Estimated Value
         var val = balance.estimated_value;
         $('#asset-value-btc').text(numeral(val.btc).format('0,0.00000000'));
@@ -2447,13 +2447,18 @@ function updateAddressList(){
                     cls += ' striped'
                     cnt = 0;
                 }
-                var label   = item.label,
-                    address = item.address,
-                    id      = item.address;
+                // Escape everything user-controlled before it is concatenated
+                // into the list markup (address labels are user-set). The search
+                // highlight then wraps the escaped filter around the escaped
+                // text, so neither the label nor the filter can inject HTML.
+                var label   = escapeHtml(item.label),
+                    address = escapeHtml(item.address),
+                    id      = escapeHtml(item.address);
                 // Highlight the filter/search
                 if(filter){
-                    label   = label.replace(filter,'<span class="highlight-search-term">' + filter + '</span>');
-                    address = address.replace(filter,'<span class="highlight-search-term">' + filter + '</span>');
+                    var f = escapeHtml(filter);
+                    label   = label.replace(f,'<span class="highlight-search-term">' + f + '</span>');
+                    address = address.replace(f,'<span class="highlight-search-term">' + f + '</span>');
                 }
                 var btc = getAddressBalance(address, 'BTC'),
                     xcp = getAddressBalance(address, 'XCP'),
@@ -4008,7 +4013,7 @@ function dialogViewAddress(address){
             var msg = $('<div class="text-center"></div>');
             addr = (address) ? address : getWalletAddress();
             msg.qrcode({ text: addr });
-            msg.append('<div style="margin-top:10px" class="btc-wallet-blackbox" id="viewAddress">' + addr + '</div>');
+            msg.append('<div style="margin-top:10px" class="btc-wallet-blackbox" id="viewAddress">' + escapeHtml(addr) + '</div>');
             return msg;
         },
         buttons:[{
@@ -6333,6 +6338,19 @@ function stripHtml(html){
     return tmp.textContent || tmp.innerText || "";
 }
 
+// Escape a value for safe interpolation into an HTML string (text or a
+// double-quoted attribute). Use this whenever wallet data -- address labels,
+// asset names, anything a user or a remote API can influence -- is concatenated
+// into markup that is later handed to .html()/.append().
+function escapeHtml(str){
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // Function to handle converting any JSON to use the CIP25 standard
 // https://github.com/CounterpartyXCP/cips/blob/master/cip-0025.md
 function legacyJsonToCip25(o){
@@ -6417,7 +6435,7 @@ function legacyJsonToCip25(o){
     if(urls){
         urls.forEach(function(str){
             var [url, qs] = String(str).split('?'),
-                url   = url.replace('"',''),
+                url   = url.replace(/"/g,''),
                 arr   = url.split('.'),
                 ext   = arr[arr.length-1].toLowerCase(),
                 found = false;
@@ -6468,9 +6486,11 @@ function legacyJsonToCip25(o){
         });
         if(html)
             json.html = json.description;
-        // Remove any attempts to inject HTML or javascript via description field
-        var desc = String(json.description).replace('&lt;','<').replace('&gt;','>').replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,'').trim();
-        json.description = stripHtml(desc);
+        // Reduce the description to plain text. A hand-rolled entity-unescape
+        // plus a <script> regex is fragile (it missed "</script >" and only
+        // replaced the first entity, and unescaping before stripping re-armed
+        // tags); DOM textContent strips every tag reliably in one step.
+        json.description = stripHtml(String(json.description)).trim();
     }
     // console.log('--- Begin CIP25 JSON ---');
     // console.log(JSON.stringify(json));
@@ -6515,7 +6535,7 @@ function showExtendedInfo(o){
     if(o.website){
         var url = getValidUrl(o.website);
         if(isValidUrl(url)){
-            $('#assetWebsite').html('<a href="' + url + '" target="_blank">' + url + '</a>').parent().show();        
+            $('#assetWebsite').html('<a href="' + escapeHtml(url) + '" target="_blank">' + escapeHtml(url) + '</a>').parent().show();        
         } else {
             $('#assetWebsite').text(o.website).parent().show();
         }
@@ -6523,7 +6543,7 @@ function showExtendedInfo(o){
     if(o.pgpsig){
         var url = o.pgpsig;
         if(isValidUrl(url)){
-            $('#pgpSignature').html('<a href="' + url + '" target="_blank">' + url + '</a>').parent().show();        
+            $('#pgpSignature').html('<a href="' + escapeHtml(url) + '" target="_blank">' + escapeHtml(url) + '</a>').parent().show();        
         } else {
             $('#pgpSignature').text(o.pgpsig).parent().show();
         }
@@ -6545,9 +6565,9 @@ function showExtendedInfo(o){
             el    = $('#assetExtendedDescription');
         if(json.test(desc)||http.test(desc)||https.test(desc)){
             var arr  = desc.split(';'),
-                html = '<a href="' + getValidUrl(arr[0]) + '" target="_blank">' + arr[0] + '</a>';
+                html = '<a href="' + escapeHtml(getValidUrl(arr[0])) + '" target="_blank">' + escapeHtml(arr[0]) + '</a>';
             if(arr[1])
-                html += ';' + arr[1];
+                html += ';' + escapeHtml(arr[1]);
             el.html(html);
         } else {
             el.text(desc);
@@ -6569,13 +6589,15 @@ function showExtendedInfo(o){
         table.empty();
         o.contacts.slice(0,10).forEach(function(item){
             var type = item.type.toLowerCase(),
-                html = '<tr><th>' + item.type + '</th><td>' + item.data + '</td></tr>';
+                t    = escapeHtml(item.type),
+                d    = escapeHtml(item.data),
+                html = '<tr><th>' + t + '</th><td>' + d + '</td></tr>';
             if(type=='email')
-                html = '<tr><th>' + item.type + '</th><td><a href="mailto:'+ item.data + '">' + item.data + '</a></td></tr>'
+                html = '<tr><th>' + t + '</th><td><a href="mailto:'+ encodeURIComponent(item.data) + '">' + d + '</a></td></tr>'
             if(type=='phone'||type=='fax')
-                html = '<tr><th>' + item.type + '</th><td><a href="tel:'+ item.data + '">' + item.data + '</a></td></tr>'
+                html = '<tr><th>' + t + '</th><td><a href="tel:'+ encodeURIComponent(item.data) + '">' + d + '</a></td></tr>'
             if(type=='url')
-                html = '<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>'
+                html = '<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>'
             table.append(html);
         });
         $('#contactInfo').show();
@@ -6585,7 +6607,7 @@ function showExtendedInfo(o){
         var table = $('#socialInfo table tbody');
         table.empty();
         o.social.slice(0,10).forEach(function(item){
-            table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            table.append('<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>');
         });
         $('#socialInfo').show();
     }
@@ -6597,10 +6619,10 @@ function showExtendedInfo(o){
         o.images.slice(0,10).forEach(function(item){
             if(item.data.substring(0,4)=='data')
                 return;
-            html = '<tr><th>' + item.type;
+            html = '<tr><th>' + escapeHtml(item.type);
             if(item.size)
-                html += ' (' + item.size + ')';
-            html += '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>';
+                html += ' (' + escapeHtml(item.size) + ')';
+            html += '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>';
             table.append(html);
         });
         if(html)
@@ -6611,7 +6633,7 @@ function showExtendedInfo(o){
         var table = $('#audioInfo table tbody');
         table.empty();
         o.audio.slice(0,10).forEach(function(item){
-            table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            table.append('<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>');
         });
         $('#audioInfo').show();
     }
@@ -6620,7 +6642,7 @@ function showExtendedInfo(o){
         var table = $('#videoInfo table tbody');
         table.empty();
         o.video.slice(0,10).forEach(function(item){
-            table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            table.append('<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>');
         });
         $('#videoInfo').show();
     }
@@ -6629,7 +6651,7 @@ function showExtendedInfo(o){
         var table = $('#fileInfo table tbody');
         table.empty();
         o.files.slice(0,10).forEach(function(item){
-            table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            table.append('<tr><th>' + escapeHtml(item.type) + '</th><td><a href="'+ escapeHtml(getValidUrl(item.data)) + '" target="_blank">' + escapeHtml(item.data) + '</a></td></tr>');
         });
         $('#fileInfo').show();
     }
@@ -6639,9 +6661,9 @@ function showExtendedInfo(o){
         table.empty();
         table.append('<tr><th>Type</th><th>Host</th><th>Value</th></tr>')
         o.dns.slice(0,10).forEach(function(item){
-            var html = '<tr><td>' + item.type + '</td><td>' + item.host + '</td><td>' + item.value + '</td></tr>';
+            var html = '<tr><td>' + escapeHtml(item.type) + '</td><td>' + escapeHtml(item.host) + '</td><td>' + escapeHtml(item.value) + '</td></tr>';
             if(item.type.toLowerCase()=='btcdns')
-                html = '<tr><td>' + item.type + '</td><td colspan="2"><a href="'+ getValidUrl(item.value) + '" target="_blank">' + item.value + '</a></td></tr>';
+                html = '<tr><td>' + escapeHtml(item.type) + '</td><td colspan="2"><a href="'+ escapeHtml(getValidUrl(item.value)) + '" target="_blank">' + escapeHtml(item.value) + '</a></td></tr>';
             table.append(html);
         });
         $('#dnsInfo').show();
@@ -6817,26 +6839,32 @@ function showAssetArtwork(o){
             var el  = $('#video-wrapper'),
                 arr = video.split('.'),
                 ext = arr[arr.length-1].toLowerCase();
+            // video comes from NFT metadata; escape it before it goes into a
+            // src attribute so a crafted value cannot break out and inject HTML.
+            var vsrc = escapeHtml(video);
             if(/youtube/.test(video)){
                 el   = $('#video-wrapper-youtube'),
-                html = '<iframe src="' + video + '" frameborder="0" allowfullscreen class="embedded-video"></iframe>';
+                html = '<iframe src="' + vsrc + '" frameborder="0" allowfullscreen class="embedded-video"></iframe>';
             } else {
                 var type = '';
                 if(ext=='mp4') type = 'video/mp4';
                 if(ext=='wmv') type = 'video/x-ms-asf';
                 if(ext=='mov') type = 'video/quicktime'
-                html = '<video draggable="false" controls playsinline="" autoplay="" loop="" class="img-fluid img-responsive" width="100%" style="max-width:400px"><source type="' + type+ '" src="' + video + '"></video>';
+                html = '<video draggable="false" controls playsinline="" autoplay="" loop="" class="img-fluid img-responsive" width="100%" style="max-width:400px"><source type="' + type+ '" src="' + vsrc + '"></video>';
             }
             el.html(html).show()
         }
         if(audio){
             $('#audio-header').show();
             var el = $('#audio-wrapper');
+            // audio comes from NFT metadata; escape it before it goes into a src
+            // attribute (see the video block above).
+            var asrc = escapeHtml(audio);
             if(/soundcloud/.test(audio)){
                 el = $('#audio-wrapper-soundcloud');
-                html = '<iframe src="https://w.soundcloud.com/player/?url=' + audio + '" frameborder="0" allowfullscreen class="soundcloud-audio" style="width:100%;"></iframe>';
+                html = '<iframe src="https://w.soundcloud.com/player/?url=' + asrc + '" frameborder="0" allowfullscreen class="soundcloud-audio" style="width:100%;"></iframe>';
             } else {
-                html = '<audio src="' + audio + '" autoplay="true" controls loop preload></audio>';
+                html = '<audio src="' + asrc + '" autoplay="true" controls loop preload></audio>';
             }
             el.html(html).show();
         }

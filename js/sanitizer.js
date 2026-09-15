@@ -11,12 +11,18 @@ function trimAttributes(node) {
         var attrName = this.name;
         var attrValue = this.value;
 
-        // remove attribute name start with "on", possible unsafe,
-        // for example: onload, onerror...
+        // Remove attributes whose name starts with "on" (event handlers:
+        // onload, onerror, ...).
         //
-        // remvoe attribute value start with "javascript:" pseudo protocol, possible unsafe,
-        // for example href="javascript:alert(1)"
-        if (attrName.indexOf('on') == 0 || attrValue.indexOf('javascript:') == 0) {
+        // Remove attributes whose value uses a dangerous pseudo-protocol. The
+        // value is normalised first -- lowercased, with leading control
+        // characters and whitespace stripped and any embedded whitespace inside
+        // the scheme removed -- so that "JavaScript:", " javascript:", and
+        // "java\tscript:" cannot slip past, and data: and vbscript: are covered
+        // as well as javascript:.
+        var normalized = String(attrValue).replace(/[\x00-\x20]+/g, "").toLowerCase();
+        var badScheme = /^(javascript|data|vbscript):/.test(normalized);
+        if (attrName.indexOf('on') == 0 || badScheme) {
             $(node).removeAttr(attrName);
         }
     });

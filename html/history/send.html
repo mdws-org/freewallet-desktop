@@ -66,14 +66,14 @@
             // Request transaction information from blockstream
             $.getJSON('https://blockstream.info' + net + '/api/tx/' + tx, function(o){
                 if(o.txid){
-                    $('#source').html(o.vin[0].prevout.scriptpubkey_address);
-                    $('#destination').html(o.vout[0].scriptpubkey_address);
+                    $('#source').text(o.vin[0].prevout.scriptpubkey_address);
+                    $('#destination').text(o.vout[0].scriptpubkey_address);
                     $('#asset').html('<img src="images/icons/btc.png" class="asset-icon-sm pull-left">BTC');
-                    $('#tx-hash').html(o.txid);
+                    $('#tx-hash').text(o.txid);
                     $('#quantity').text(numeral(o.vout[0].value).multiply(0.00000001).format('0,0.00000000'));
                     $('#status').text((o.status.block_height) ? 'Valid' : 'Pending');
-                    $('#timestamp').html('<span data-livestamp='  + o.status.block_time + ' class="nowrap"></span>');
-                    $('#block').html(numeral(o.status.block_height).format('0,0'));
+                    $('#timestamp').html('<span data-livestamp="' + escapeHtml(o.status.block_time) + '" class="nowrap"></span>');
+                    $('#block').text(numeral(o.status.block_height).format('0,0'));
                     $('#tx-index').text('-');
                 }
             }).fail(function(){
@@ -82,14 +82,14 @@
                     net2 = (FW.WALLET_NETWORK==2) ? 'btc-testnet' : 'btc';
                 $.getJSON('https://api.blockcypher.com/v1/btc/' + net + '/txs/' + tx, function(o){
                     if(o.hash){
-                        $('#source').html(o.inputs[0].addresses[0]);
-                        $('#destination').html(FW.WALLET_ADDRESS);
+                        $('#source').text(o.inputs[0].addresses[0]);
+                        $('#destination').text(FW.WALLET_ADDRESS);
                         $('#asset').html('<img src="images/icons/btc.png" class="asset-icon-sm pull-left">BTC');
-                        $('#tx-hash').html(o.hash);
+                        $('#tx-hash').text(o.hash);
                         $('#quantity').text(numeral(o.outputs[0].value).multiply(0.00000001).format('0,0.00000000'));
                         $('#status').text((o.block_height) ? 'Valid' : 'Pending');
-                        $('#timestamp').html('<span data-livestamp='  + moment(o.confirmed,["YYYY-MM-DDTH:m:s"]).unix() + ' class="nowrap"></span>');
-                        $('#block').html(numeral(o.block_height).format('0,0'));
+                        $('#timestamp').html('<span data-livestamp="' + escapeHtml(moment(o.confirmed,["YYYY-MM-DDTH:m:s"]).unix()) + '" class="nowrap"></span>');
+                        $('#block').text(numeral(o.block_height).format('0,0'));
                         $('#tx-index').text('-');
                         $('#history-info-more').attr('href','https://live.blockcypher.com/' + net2 + '/tx/' + tx);
                     }
@@ -103,16 +103,16 @@
             $.getJSON(FW.EXPLORER_API + '/api/tx/' + tx, function( o ){
                 if(!o.error){
                     var asset = (o.asset_longname && o.asset_longname!='') ? o.asset_longname : o.asset;
-                    $('#source').html(o.source);
-                    $('#destination').html(o.destination);
-                    $('#asset').html('<img src="' + FW.EXPLORER_API + '/icon/' + o.asset + '.png" class="asset-icon-sm pull-left">' + asset);
-                    $('#tx-hash').html(o.tx_hash);
+                    $('#source').text(o.source);
+                    $('#destination').text(o.destination);
+                    $('#asset').html('<img src="' + FW.EXPLORER_API + '/icon/' + encodeURIComponent(o.asset) + '.png" class="asset-icon-sm pull-left">' + escapeHtml(asset));
+                    $('#tx-hash').text(o.tx_hash);
                     var fmt = (String(o.quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
                     $('#quantity').text(numeral(o.quantity).format(fmt));
                     $('#status').text(o.status);
-                    $('#timestamp').html('<span data-livestamp='  + o.timestamp + ' class="nowrap"></span>');
+                    $('#timestamp').html('<span data-livestamp="' + escapeHtml(o.timestamp) + '" class="nowrap"></span>');
                     if(o.tx_index){
-                        $('#block').html(numeral(o.block_index).format('0,0'));
+                        $('#block').text(numeral(o.block_index).format('0,0'));
                         $('#tx-index').text(numeral(o.tx_index).format('0,0'));
                     } else {
                         $('#block').text('-');

@@ -87,13 +87,13 @@
         $.getJSON(FW.EXPLORER_API + '/api/tx/' + tx, function( o ){
             if(!o.error){
                 var fmt = (o.divisible) ? '0,0.00000000' : '0,0';
-                $('#source').html(o.source);
-                $('#issuer').html(o.issuer);
-                $('#destination').html(o.destination);
-                $('#asset').html('<img src="' + FW.EXPLORER_API + '/icon/' + o.asset + '.png" class="asset-icon-sm pull-left">' + o.asset);
+                $('#source').text(o.source);
+                $('#issuer').text(o.issuer);
+                $('#destination').text(o.destination);
+                $('#asset').html('<img src="' + FW.EXPLORER_API + '/icon/' + encodeURIComponent(o.asset) + '.png" class="asset-icon-sm pull-left">' + escapeHtml(o.asset));
                 if(o.asset_longname)
-                    $('#asset-longname').html('<img src="'+ FW.EXPLORER_API + '/icon/' + o.asset + '.png" class="asset-icon-sm pull-left">' + o.asset_longname + '</a>');
-                $('#tx-hash').html(o.tx_hash);
+                    $('#asset-longname').html('<img src="'+ FW.EXPLORER_API + '/icon/' + encodeURIComponent(o.asset) + '.png" class="asset-icon-sm pull-left">' + escapeHtml(o.asset_longname) + '</a>');
+                $('#tx-hash').text(o.tx_hash);
                 var fmt = (String(o.quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
                 $('#quantity').text(numeral(o.quantity).format(fmt));
                 $('#description').text(o.description);
@@ -102,9 +102,9 @@
                 $('#locked').text(o.locked);
                 $('#fee').text(o.fee + ' XCP');
                 $('#transfer').text(o.transfer);
-                $('#timestamp').html('<span data-livestamp='  + o.timestamp + ' class="nowrap"></span>');
+                $('#timestamp').html('<span data-livestamp="' + escapeHtml(o.timestamp) + '" class="nowrap"></span>');
                 if(o.tx_index){
-                    $('#block').html(numeral(o.block_index).format('0,0'));
+                    $('#block').text(numeral(o.block_index).format('0,0'));
                     $('#tx-index').text(numeral(o.tx_index).format('0,0'));
                 } else {
                     $('#block').text('-');

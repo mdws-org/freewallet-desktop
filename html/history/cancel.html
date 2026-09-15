@@ -54,13 +54,13 @@
         // Request transaction information
         $.getJSON(FW.EXPLORER_API + '/api/tx/' + tx, function( o ){
             if(!o.error){
-                $('#source').html(o.source);
-                $('#tx-hash').html(o.tx_hash);
-                $('#related-order').html(o.offer_hash);
+                $('#source').text(o.source);
+                $('#tx-hash').text(o.tx_hash);
+                $('#related-order').text(o.offer_hash);
                 $('#status').text(o.status);
-                $('#timestamp').html('<span data-livestamp='  + o.timestamp + ' class="nowrap"></span>');
+                $('#timestamp').html('<span data-livestamp="' + escapeHtml(o.timestamp) + '" class="nowrap"></span>');
                 if(o.tx_index){
-                    $('#block').html(numeral(o.block_index).format('0,0'));
+                    $('#block').text(numeral(o.block_index).format('0,0'));
                     $('#tx-index').text(numeral(o.tx_index).format('0,0'));
                 } else {
                     $('#block').text('-');

@@ -266,12 +266,15 @@ function reduce(numerator, denominator) {
 }
 
 function isValidURL(str) {
-  var pattern = /^(https?:\/\/)?((([a-z\d]([a-z\d-]*[a-z\d])*)\.)+[a-z]{2,}|((\d{1,3}\.){3}\d{1,3}))(\:\d+)?(\/[-a-z\d%_.~+]*)*(\?[;&a-z\d%_.~+=-]*)?(\#[-a-z\d_]*)?$/i;
-
-  if (!str.match(pattern)) {
+  // The previous implementation used a regex with nested quantifiers over the
+  // host, which backtracks catastrophically on crafted input (ReDoS) and can
+  // hang the app. Parse with the URL constructor instead -- linear, and it only
+  // accepts http/https.
+  try {
+    var u = new URL(String(str));
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch (e) {
     return false;
-  } else {
-    return true;
   }
 }
 

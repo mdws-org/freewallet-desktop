@@ -60,12 +60,12 @@
             if(!o.error){
                 var asset = (o.asset_longname && o.asset_longname!='') ? o.asset_longname : o.asset,
                     fmt   = (String(o.quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
-                $('#source').html(o.source);
-                $('#timestamp').html('<span data-livestamp='  + o.timestamp + ' class="nowrap"></span> (' + moment.unix(o.timestamp).utcOffset(0).format() + ' GMT)');
-                $('#block').html(numeral(o.block_index).format('0,0'));
+                $('#source').text(o.source);
+                $('#timestamp').html('<span data-livestamp="' + escapeHtml(o.timestamp) + '" class="nowrap"></span> (' + moment.unix(o.timestamp).utcOffset(0).format() + ' GMT)');
+                $('#block').text(numeral(o.block_index).format('0,0'));
                 $('#tx-hash').text(o.tx_hash);
                 $('#tx-index').text(numeral(o.tx_index).format('0,0'));
-                $('#asset').html('<img src="' + FW.EXPLORER_API + '/icon/' + o.asset + '.png" class="asset-icon-sm pull-left">' + asset);
+                $('#asset').html('<img src="' + FW.EXPLORER_API + '/icon/' + encodeURIComponent(o.asset) + '.png" class="asset-icon-sm pull-left">' + escapeHtml(asset));
                 $('#quantity').text(numeral(o.quantity).format(fmt));
                 $('#status').text(o.status);
                 $('#tag').text(hex2string(o.tag));

@@ -85,15 +85,15 @@
         // Request transaction information
         $.getJSON(FW.EXPLORER_API + '/api/tx/' + tx, function( o ){
             if(!o.error){
-                $('#source').html(o.source);
-                $('#feed-address').html(o.feed_address);
+                $('#source').text(o.source);
+                $('#feed-address').text(o.feed_address);
                 $('#expiration').text(numeral(o.expiration).format('0,0'));
-                $('#tx-hash').html(o.tx_hash);
+                $('#tx-hash').text(o.tx_hash);
                 $('#fee').text(o.fee + ' ('+ numeral(o.fee * 100).format('0,0.00')+ '%)');
                 $('#status').text(o.status);
-                $('#timestamp').html('<span data-livestamp='  + o.timestamp + ' class="nowrap"></span>');
-                var give_asset  = '&nbsp;<img src="' + FW.EXPLORER_API + '/icon/' + o.give_asset + '.png" class="asset-icon-sm pull-left">' + o.give_asset,
-                    get_asset   = '&nbsp;<img src="' + FW.EXPLORER_API + '/icon/' + o.get_asset  + '.png" class="asset-icon-sm pull-left">' + o.get_asset,
+                $('#timestamp').html('<span data-livestamp="' + escapeHtml(o.timestamp) + '" class="nowrap"></span>');
+                var give_asset  = '&nbsp;<img src="' + FW.EXPLORER_API + '/icon/' + encodeURIComponent(o.give_asset) + '.png" class="asset-icon-sm pull-left">' + escapeHtml(o.give_asset),
+                    get_asset   = '&nbsp;<img src="' + FW.EXPLORER_API + '/icon/' + encodeURIComponent(o.get_asset ) + '.png" class="asset-icon-sm pull-left">' + escapeHtml(o.get_asset),
                     give_format = (String(o.give_quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000',
                     get_format  = (String(o.get_quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
                 $('#give-quantity').html(numeral(o.give_quantity).format(give_format) + give_asset);
@@ -101,7 +101,7 @@
                 $('#get-quantity').html(numeral(o.get_quantity).format(get_format) + get_asset);
                 $('#get-remaining').html(numeral(o.get_remaining).format(get_format) + get_asset);
                 if(o.tx_index){
-                    $('#block').html(numeral(o.block_index).format('0,0'));
+                    $('#block').text(numeral(o.block_index).format('0,0'));
                     $('#tx-index').text(numeral(o.tx_index).format('0,0'));
                 } else {
                     $('#block').text('-');

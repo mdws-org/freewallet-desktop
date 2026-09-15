@@ -116,25 +116,25 @@
         // Handle requesting block information
         $.getJSON(FW.EXPLORER_API + '/api/tx/' + tx, function( o ){
             if(!o.error){
-                $('#source').html(o.source);
-                $('#feed-address').html(o.feed_address );
-                $('#tx-hash').html(o.tx_hash);
+                $('#source').text(o.source);
+                $('#feed-address').text(o.feed_address);
+                $('#tx-hash').text(o.tx_hash);
                 $('#fee').text(o.fee + ' ('+ numeral(o.fee * 100).format('0,0.00')+ '%)');
                 $('#status').text(o.status);
                 $('#bet-type').text(bet_types[o.bet_type]);
                 $('#target-value').text(o.target_value);
                 $('#leverage').text(o.leverage);
                 $('#expiration').text(numeral(o.expiration).format('0,0'));
-                $('#expire-index').html(numeral(o.expire_index).format('0,0'));
-                $('#deadline').html('<span data-livestamp='  + o.deadline + ' class="nowrap"></span>');
+                $('#expire-index').text(numeral(o.expire_index).format('0,0'));
+                $('#deadline').html('<span data-livestamp="' + escapeHtml(o.deadline) + '" class="nowrap"></span>');
                 var link = '&nbsp;XCP';
-                $('#wager-quantity').html(o.wager_quantity + link);
-                $('#wager-remaining').html(o.wager_remaining + link);
-                $('#counterwager-quantity').html(o.counterwager_quantity + link);
-                $('#counterwager-remaining').html(o.counterwager_remaining + link);
-                $('#timestamp').html('<span data-livestamp='  + o.timestamp + ' class="nowrap"></span>');
+                $('#wager-quantity').html(escapeHtml(o.wager_quantity) + link);
+                $('#wager-remaining').html(escapeHtml(o.wager_remaining) + link);
+                $('#counterwager-quantity').html(escapeHtml(o.counterwager_quantity) + link);
+                $('#counterwager-remaining').html(escapeHtml(o.counterwager_remaining) + link);
+                $('#timestamp').html('<span data-livestamp="' + escapeHtml(o.timestamp) + '" class="nowrap"></span>');
                 if(o.tx_index){
-                    $('#block').html(numeral(o.block_index).format('0,0'));
+                    $('#block').text(numeral(o.block_index).format('0,0'));
                     $('#tx-index').text(numeral(o.tx_index).format('0,0'));
                 } else {
                     $('#block').text('-');

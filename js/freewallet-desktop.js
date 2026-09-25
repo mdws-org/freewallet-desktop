@@ -302,7 +302,10 @@ function loadPage(page){
 
 // Initialize / Load the wallet
 function initWallet(){
-    var hasV2 = readVault()!==null,
+    // Presence is judged on the raw records, not on whether they parse: a
+    // damaged vault must still be treated as a wallet, never as an invitation
+    // to create a new one over it.
+    var hasV2 = ls.getItem('walletVault')!==null,
         hasV1 = ls.getItem('wallet')!==null; // legacy layout still present (pre-migration or backup)
     if(hasV2 || hasV1){
         // A stale decrypted copy may linger in session storage from a previous
@@ -311,19 +314,24 @@ function initWallet(){
         ss.removeItem('wallet');
         FW.WALLET_KEYS = {};
         FW.WALLET_ENCKEY = null;
+        // The Auto-BTCpay check runs once the unlock dialog has been answered,
+        // so its own password dialog never opens on top of it. After an unlock
+        // the wallet is open and the check stashes silently; after a Cancel it
+        // is locked and the check asks (dialogEnableBtcpay), which is also
+        // where auto-pay can be turned off. A legacy wallet cannot answer that
+        // dialog until migration has produced a v2 vault, so the migrate
+        // dialog runs the check only on success.
         if(hasV2){
             // v2 vault present (possibly with legacy backup blobs still beside
             // it): prompt for the password to unlock.
-            dialogPassword(false);
+            dialogPassword(false, checkBtcpayAuth, checkBtcpayAuth);
         } else {
             // Only a legacy v1 wallet on disk: migrate to v2 on unlock.
-            dialogMigrate();
+            dialogMigrate(checkBtcpayAuth);
         }
     } else {
         dialogWelcome();
     }
-    // Check if we have everything needed to authorize Auto-BTCpay transactions
-    checkBtcpayAuth();
     // Trigger an immediate check of if we need to update the wallet information (prices/balances)
     checkUpdateWallet();
     // Check every 60 seconds if we should update the wallet information
@@ -526,6 +534,10 @@ function writeVault( descriptor ){
     ls.setItem('walletEncrypted', 1);
     FW.WALLET_ENCRYPTED = 1;
     ss.removeItem('skipWalletAuth');
+    // A live Auto-BTCpay key stash tracks the wallet's imported keys, so a key
+    // imported or removed after auto-pay was enabled is reflected in it.
+    if(ss.getItem('btcpayWallet')!==null)
+        ss.setItem('btcpayKeys', JSON.stringify(FW.WALLET_KEYS));
     return true;
 }
 
@@ -542,9 +554,13 @@ function decryptWallet( keyset ){
     if(wallet===null) return false;
     var privkeys = v.keys ? WalletCrypto.decrypt(v.keys, keyset) : '{}';
     if(privkeys===null) return false;
+    // Everything is decoded before any session state is touched, so a failure
+    // at any step leaves the wallet exactly as locked as it was.
+    var keys;
+    try { keys = JSON.parse(privkeys); } catch(e){ return false; }
     FW.WALLET_ENCKEY = keyset;
     ss.setItem('wallet', wallet);
-    FW.WALLET_KEYS = JSON.parse(privkeys);
+    FW.WALLET_KEYS = keys;
     ss.removeItem('skipWalletAuth');
     // A successful v2 unlock confirms the vault is good, so any pre-migration
     // legacy blobs kept as a safety net can now be discarded.
@@ -592,13 +608,39 @@ function migrateWalletToV2( enteredPassword, newPassword ){
     } else {
         v1pw = WalletCrypto.legacyConveniencePassword(storedPw);
     }
+    // The new password: the existing one for an already-encrypted wallet, or the
+    // user's chosen password for a former convenience wallet.
+    return rebuildVaultFromV1(v1pw, wasEncrypted ? enteredPassword : newPassword);
+}
+
+// Rebuild the v2 vault from the legacy blobs that migration keeps on disk until
+// the first successful v2 unlock, for a vault that was written but no longer
+// decrypts. The caller must already hold proof that `password` is the wallet's
+// password: the v2 verifier accepted it (v2Verified), or it is about to be
+// checked here against the legacy record. Without that proof a mistyped
+// password would re-key the wallet under itself. A wallet that had a password
+// before migration kept it, so the same password opens the legacy blobs; a
+// former no-password wallet's legacy password is the stored convenience one and
+// is usable only once the v2 verifier has vouched for `password`. Returns true
+// when the vault was rebuilt and the wallet is unlocked.
+function recoverVaultFromV1Backup( password, v2Verified ){
+    var storedPw = ls.getItem('walletPassword');
+    if(ls.getItem('wallet')===null || storedPw===null) return false;
+    if(WalletCrypto.legacyVerify(password, storedPw))
+        return rebuildVaultFromV1(password, password);
+    if(!v2Verified) return false;
+    return rebuildVaultFromV1(WalletCrypto.legacyConveniencePassword(storedPw), password);
+}
+
+// Decrypt the legacy (v1) blobs with v1pw, encrypt them under newPw, verify the
+// new blobs decrypt back to the identical plaintext, then write the vault and
+// leave the wallet unlocked. Returns false, having written nothing, on any
+// failure.
+function rebuildVaultFromV1( v1pw, newPw ){
     var wallet   = WalletCrypto.decryptV1(ls.getItem('wallet'), v1pw),
         keysBlob = ls.getItem('walletKeys'),
         privkeys = keysBlob ? WalletCrypto.decryptV1(keysBlob, v1pw) : '{}';
     if(wallet===null || privkeys===null) return false;
-    // The new password: the existing one for an already-encrypted wallet, or the
-    // user's chosen password for a former convenience wallet.
-    var newPw = wasEncrypted ? enteredPassword : newPassword;
     if(!newPw) return false;
     var mk = WalletCrypto.makeCrypto(newPw),
         encWallet = WalletCrypto.encrypt(wallet, mk.keyset),
@@ -653,7 +695,11 @@ function getWalletPassphrase(){
     return false;
 }
 
-// Handle locking wallet by removing decrypted wallet from sessionStorage
+// Handle locking wallet by removing decrypted wallet from sessionStorage.
+// The Auto-BTCpay stash (ss 'btcpayWallet' + 'btcpayKeys') deliberately
+// survives a lock: it exists so matched orders can still be paid after the
+// auto-lock timer fires. It lives until auto-pay is disabled, the wallet is
+// reset, or the app closes; the order form says so where the user opts in.
 function lockWallet(){
     ss.removeItem('wallet');
     ss.removeItem('walletPassword');
@@ -839,16 +885,30 @@ function addWalletPrivkey(key){
     return address;
 }
 
-// Validate wallet password
 // Validate a wallet password against the stored v2 KDF verifier. Returns the
-// derived encryption key on success (pass it to decryptWallet), or false. This
-// replaces the original check, which decrypted a stored copy of the password --
-// that stored copy was itself the vulnerability and no longer exists.
+// derived encryption key on success (pass it to decryptWallet), or false. The
+// verifier is the only judge of an existing password: no length or character
+// rule is applied here, because a wallet migrated from the legacy format may
+// carry a password that would not be accepted for a new wallet.
 function isValidWalletPassword( password ){
     var v = readVault();
     if(!v || !v.crypto) return false;
     var key = WalletCrypto.verifyPassword(password, v.crypto);
     return key ? key : false;
+}
+
+// Minimum requirements for a password being SET: a new wallet, a former
+// no-password wallet choosing one at migration, or a password change. Returns
+// the error message to show, or false when the password is acceptable. The
+// confirmation is checked only when one is given.
+function validateNewWalletPassword( password, confirm ){
+    if(password.length < 12)
+        return 'Wallet password must be at least 12 characters long';
+    if(!/\d/.test(password))
+        return 'Wallet password must contain at least 1 number';
+    if(typeof confirm!='undefined' && password!=confirm)
+        return 'Password and Confirmation password do not match!';
+    return false;
 }
 
 // Validate wallet passphrase
@@ -1074,6 +1134,21 @@ function checkBtcpayAuth(){
     }
 }
 
+// Turn Auto-BTCpay off for every monitored order and drop the session stash
+// that existed for it. Matched orders then go through the manual payment dialog.
+function disableBtcpayAutopay(){
+    $.each(['mainnet','testnet'], function(ndx, network){
+        $.each(FW.BTCPAY_ORDERS[network], function(address, orders){
+            $.each(orders, function(order, autopay){
+                orders[order] = 0;
+            });
+        });
+    });
+    ls.setItem('btcpayOrders', JSON.stringify(FW.BTCPAY_ORDERS));
+    ss.removeItem('btcpayWallet');
+    ss.removeItem('btcpayKeys');
+}
+
 // Check the status of any btcpay transactions
 function checkBtcpayTransactions( force ){
     // console.log('checkBtcpayTransactions');
@@ -1286,7 +1361,9 @@ function autoBtcpay(network, o){
         }
         // Handle removing the hot-swapped wallet + restored keys if needed, so a
         // locked session returns to holding no secret in memory after the tx.
-        if(c){
+        // If the user unlocked while the tx was in flight, the session is now
+        // theirs (the derived key is set) and is left alone.
+        if(c && !FW.WALLET_ENCKEY){
             ss.removeItem('wallet');
             FW.WALLET_KEYS = {};
         }
@@ -4154,14 +4231,7 @@ function dialogNewWalletPassword( callback ){
             action: function(dialog){
                 var pass    = $('[name="wallet_password"]').val(),
                     confirm = $('[name="wallet_confirm_password"]').val(),
-                    err     = false;
-                if(pass.length < 12){
-                    err = 'Wallet password must be at least 12 characters long';
-                } else if(!/\d/.test(pass)){
-                    err = 'Wallet password must contain at least 1 number';
-                } else if(pass != confirm){
-                    err = 'Password and Confirmation password do not match!';
-                }
+                    err     = validateNewWalletPassword(pass, confirm);
                 if(err){
                     dialogMessage(null, err, true);
                 } else {
@@ -4215,15 +4285,9 @@ function dialogMigrate( callback ){
                     ok = migrateWalletToV2(pass, null);
                     if(!ok) err = 'Invalid password';
                 } else {
-                    // New password: enforce the same minimum requirements.
-                    var confirm = $('[name="wallet_confirm_password"]').val();
-                    if(pass.length < 12){
-                        err = 'Wallet password must be at least 12 characters long';
-                    } else if(!/\d/.test(pass)){
-                        err = 'Wallet password must contain at least 1 number';
-                    } else if(pass != confirm){
-                        err = 'Password and Confirmation password do not match!';
-                    } else {
+                    // New password: the requirements for any password being set.
+                    err = validateNewWalletPassword(pass, $('[name="wallet_confirm_password"]').val());
+                    if(!err){
                         ok = migrateWalletToV2(null, pass);
                         if(!ok) err = 'Could not upgrade the wallet';
                     }
@@ -4234,17 +4298,19 @@ function dialogMigrate( callback ){
                     dialog.close();
                     FW.WALLET_LAST_UNLOCKED = Date.now();
                     updateWalletOptions();
-                    // A wallet that already had a password keeps it, so it can be
-                    // shorter than the minimum now required of a new one. The
-                    // upgrade is not blocked on changing it -- that would stop a
-                    // user mid-migration -- but the weaker password limits what
-                    // the stronger key derivation can do, so say so.
-                    if(wasEncrypted && pass.length < 12){
+                    // A wallet that already had a password keeps it, even one
+                    // that would not be accepted for a new wallet. The upgrade
+                    // is not blocked on changing it, since that would stop a
+                    // user mid-migration, but the weaker password limits what
+                    // the stronger key derivation can do, so say so. Unlocking
+                    // never applies the new-password rules, so the kept
+                    // password keeps working.
+                    if(wasEncrypted && validateNewWalletPassword(pass)){
                         dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet ready',
                             'Your wallet encryption has been upgraded and your wallet is unlocked.' +
-                            '<br/><br/><b>Your password is shorter than the ' + 12 + ' characters now required for a new wallet.</b> ' +
-                            'It still works, but a longer password would make the new encryption meaningfully harder to attack. ' +
-                            'You can change it from the wallet settings.');
+                            '<br/><br/><b>Your password does not meet the requirements now applied to a new wallet password</b> (at least 12 characters, including a number). ' +
+                            'It still works, but a stronger password would make the new encryption meaningfully harder to attack. ' +
+                            'You can change it under Settings, on the Wallet tab.');
                     } else {
                         dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet ready', 'Your wallet encryption has been upgraded and your wallet is unlocked.');
                     }
@@ -4255,8 +4321,11 @@ function dialogMigrate( callback ){
     });
 }
 
-function dialogPassword( enable, callback ){
-    var title = (enable) ? 'Enter new wallet password' : 'Enter wallet password';
+// Unlock the wallet (enable=false) or change its password (enable=true).
+// callback runs only after the password action succeeded; onCancel runs when
+// the user declines instead.
+function dialogPassword( enable, callback, onCancel ){
+    var title = (enable) ? 'Change wallet password' : 'Enter wallet password';
     BootstrapDialog.show({
         type: 'type-default',
         title: '<i class="fa fa-lg fa-fw fa-lock"></i> ' + title,
@@ -4265,26 +4334,31 @@ function dialogPassword( enable, callback ){
         closeByBackdrop: false,
         message: function(dialog){
             var msg = $('<div></div>');
-            msg.append('<input name="wallet_password" type="text" class="form-control"  placeholder="Enter Password" autocomplete="off" style="-webkit-text-security: disc;"/>');
             if(enable){
-                msg.append('<input name="wallet_confirm_password" type="text" class="form-control"  placeholder="Confirm Password" autocomplete="off" style="margin: 10px 0px; -webkit-text-security: disc" />');
-                msg.append('<p class="justify no-bottom-margin">This password will be used to encrypt your wallet to give you an additional layer of protection against unauthorized use.</p>')
+                msg.append('<input name="wallet_current_password" type="text" class="form-control"  placeholder="Current Password" autocomplete="off" style="margin-bottom: 10px; -webkit-text-security: disc;"/>');
+                msg.append('<input name="wallet_password" type="text" class="form-control"  placeholder="New Password" autocomplete="off" style="-webkit-text-security: disc;"/>');
+                msg.append('<input name="wallet_confirm_password" type="text" class="form-control"  placeholder="Confirm New Password" autocomplete="off" style="margin: 10px 0px; -webkit-text-security: disc" />');
+                msg.append('<p class="justify no-bottom-margin">This password encrypts your wallet on this device. You will need it each time you open the wallet. It cannot be recovered if lost.</p>')
+            } else {
+                msg.append('<input name="wallet_password" type="text" class="form-control"  placeholder="Enter Password" autocomplete="off" style="-webkit-text-security: disc;"/>');
             }
             return msg;
         },
         onshown: function(dialog){
-            $('[name="wallet_password"]').focus();
+            $('[name="' + (enable ? 'wallet_current_password' : 'wallet_password') + '"]').focus();
         },
         buttons:[{
             label: 'Cancel',
-            icon: 'fa fa-lg fa-fw fa-thumbs-down',       
-            cssClass: 'btn-danger', 
+            icon: 'fa fa-lg fa-fw fa-thumbs-down',
+            cssClass: 'btn-danger',
             action: function(dialog){
                 // Set flag to indicate user has skipped auth, and not prompt again until needed.
                 if(!enable)
                     ss.setItem('skipWalletAuth',1)
                 dialog.close();
                 updateWalletOptions();
+                if(typeof onCancel=='function')
+                    onCancel();
             }
         },{
             label: 'Ok',
@@ -4294,43 +4368,62 @@ function dialogPassword( enable, callback ){
             action: function(dialog){
                 var pass = $('[name="wallet_password"]').val(),
                     err  = false;
-                // Validate that password meets minimum requirements (12 chars, 1 number)
-                if(pass.length < 12){
-                    err = 'Wallet password must be at least 12 characters long';
-                } else if(!/\d/.test(pass)){
-                    err = 'Wallet password must contain at least 1 number';
-                } else if(enable){
-                    var confirm = $('[name="wallet_confirm_password"]').val();
-                    if(pass!=confirm)
-                        err = 'Password and Confirmation password do not match!';
-                }
-                if(err){
-                    dialogMessage(null, err, true);
-                } else {
-                    // Change the wallet password (wallets are always encrypted;
-                    // this re-derives the key and re-encrypts under the new one).
-                    if(enable){
-                        changeWalletPassword(pass);
+                if(enable){
+                    // Change: the current password must verify (an open session
+                    // alone is not proof of it), the new one must meet the
+                    // new-password rules, then the vault is re-derived and
+                    // re-encrypted under it.
+                    if(!isValidWalletPassword($('[name="wallet_current_password"]').val()))
+                        err = 'Current password is not correct';
+                    if(!err)
+                        err = validateNewWalletPassword(pass, $('[name="wallet_confirm_password"]').val());
+                    if(!err && !changeWalletPassword(pass))
+                        err = 'The wallet password could not be changed';
+                    if(!err){
                         updateWalletOptions();
                         dialog.close();
                         dialogMessage('<i class="fa fa-lg fa-fw fa-lock"></i> Wallet password changed', 'Your wallet password has been changed and your wallet re-encrypted.');
-                    } else {
-                        // Validate the password against the stored KDF verifier;
-                        // on success it returns the derived key to unlock with.
-                        var key = isValidWalletPassword(pass);
-                        if(key){
-                            decryptWallet(key);
-                            dialog.close();
-                            FW.WALLET_LAST_UNLOCKED = Date.now();
-                            dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet unlocked', 'Your wallet is now unlocked and available for use');
-                            updateWalletOptions();
-                        } else {
-                            dialogMessage(null, 'Invalid password', true);
-                        }
                     }
-                    // If we have a callback, call it
-                    if(typeof callback=='function')
-                        callback();
+                } else {
+                    // Unlock: the stored KDF verifier is the only check applied
+                    // to an existing password; on success it returns the derived
+                    // key to decrypt with. A verified password whose vault still
+                    // fails to decrypt leaves the wallet locked and untouched.
+                    // A vault that cannot be read or decrypted is rebuilt from
+                    // the legacy blobs when migration left them on disk and the
+                    // password is proven (recoverVaultFromV1Backup).
+                    var key = isValidWalletPassword(pass),
+                        rebuilt = false;
+                    if(!key){
+                        if(readVault()===null){
+                            rebuilt = recoverVaultFromV1Backup(pass, false);
+                            if(!rebuilt)
+                                err = 'The stored wallet record is damaged and could not be read. Nothing was changed; restore the wallet from its passphrase.';
+                        } else {
+                            err = 'Invalid password';
+                        }
+                    } else if(!decryptWallet(key)){
+                        rebuilt = recoverVaultFromV1Backup(pass, true);
+                        if(!rebuilt)
+                            err = 'The password is correct but the stored wallet could not be decrypted. The wallet stays locked and nothing was changed. If this happens again, restore the wallet from its passphrase.';
+                    }
+                    if(!err){
+                        dialog.close();
+                        FW.WALLET_LAST_UNLOCKED = Date.now();
+                        if(rebuilt){
+                            dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet unlocked',
+                                'The stored wallet was damaged and has been rebuilt from the copy kept from before the encryption upgrade. Your wallet is now unlocked and available for use.');
+                        } else {
+                            dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet unlocked', 'Your wallet is now unlocked and available for use');
+                        }
+                        updateWalletOptions();
+                    }
+                }
+                if(err){
+                    dialogMessage(null, err, true);
+                } else if(typeof callback=='function'){
+                    // The callback runs only once the password action succeeded.
+                    callback();
                 }
             }
         }]
@@ -4882,8 +4975,8 @@ function dialogEnableBtcpay(){
         closeByBackdrop: false,
         message: function(dialog){
             var msg = $('<div></div>');
-            // msg.append('<div class="alert alert-info">Please enter your wallet password</div>');
             msg.append('<input name="wallet_password" type="text" class="form-control"  placeholder="Enter Password" autocomplete="off" style="-webkit-text-security: disc;"/>');
+            msg.append('<p class="justify" style="margin-top: 10px;">While Auto-BTCpay is enabled, a copy of your wallet seed and any imported private keys is kept in this window\'s session memory so that matched orders can be paid while the wallet is locked. Locking the wallet does not remove that copy; disabling Auto-BTCpay, logging out, or closing the app does.</p>');
             return msg;
         },
         onshown: function(dialog){
@@ -4896,6 +4989,7 @@ function dialogEnableBtcpay(){
             action: function(dialog){
                 // Confirm with user that auto-btcpay will be disabled
                 dialogConfirm('Disable Auto-BTCpay?','<div class="alert alert-danger text-center"><b>Notice</b>: Any order matches for BTC will need to be paid manually!</div>', false, false, function(){
+                    disableBtcpayAutopay();
                     dialog.close();
                 });
             }
@@ -4907,38 +5001,24 @@ function dialogEnableBtcpay(){
             action: function(dialog){
                 var pass = $('[name="wallet_password"]').val(),
                     err  = false;
-                // Validate that password meets minimum requirements (12 chars, 1 number)
-                if(pass.length < 12){
-                    err = 'Wallet password must be at least 12 characters long';
-                } else if(!/\d/.test(pass)){
-                    err = 'Wallet password must contain at least 1 number';
-                }
-                if(err){
-                    dialogMessage(null, err, true);
+                // An existing password: the stored KDF verifier is the only check.
+                var key = isValidWalletPassword(pass);
+                if(!key){
+                    err = 'Invalid password';
+                } else if(!decryptWallet(key)){
+                    err = 'The password is correct but the stored wallet could not be decrypted. Auto-BTCpay was not enabled. If this happens again, restore the wallet from its passphrase.';
                 } else {
-                    // Validate the password against the stored KDF verifier
-                    var key = isValidWalletPassword(pass);
-                    if(key){
-                        // Decrypt wallet and save to btcpayWallet, then re-lock
-                        decryptWallet(key);
-                        var w = ss.getItem('wallet');
-                        if(w){
-                            ss.setItem('btcpayWallet',w);
-                            // Stash the imported private keys alongside the seed so
-                            // auto-pay can sign imported-address orders after the
-                            // wallet locks (HD addresses re-derive from the seed).
-                            ss.setItem('btcpayKeys', JSON.stringify(FW.WALLET_KEYS));
-                        }
-                        lockWallet();
-                        dialog.close();
-                        dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Auto-BTCpay Enabled', 'Auto-BTCpay is now enabled and any order matches for BTC will be automatically paid');
-                    } else {
-                        dialogMessage(null, 'Invalid password', true);
-                    }
-                    // If we have a callback, call it
-                    if(typeof callback=='function')
-                        callback();
+                    // Stash the seed and the imported private keys for auto-pay,
+                    // then re-lock. Imported-address orders need their own keys;
+                    // HD addresses re-derive from the seed.
+                    ss.setItem('btcpayWallet', ss.getItem('wallet'));
+                    ss.setItem('btcpayKeys', JSON.stringify(FW.WALLET_KEYS));
+                    lockWallet();
+                    dialog.close();
+                    dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Auto-BTCpay Enabled', 'Auto-BTCpay is now enabled and any order matches for BTC will be automatically paid');
                 }
+                if(err)
+                    dialogMessage(null, err, true);
             }
         }]
     });  

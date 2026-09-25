@@ -83,7 +83,7 @@ function generateTransaction(callback=null, broadcast=false){
         give_sat = getSatoshis(vals.give_amount);
         expires  = numeral(vals.expires).value(),
         command  = (broadcast) ? 'cpOrder' : 'createOrder';
-    eval(command)(network, vals.source, vals.get_asset, vals.give_asset, get_sat, give_sat, expires, fee_sat, callback);
+    window[command](network, vals.source, vals.get_asset, vals.give_asset, get_sat, give_sat, expires, fee_sat, callback);
 }
 
 // Handle updating the confirmation text based off selected value

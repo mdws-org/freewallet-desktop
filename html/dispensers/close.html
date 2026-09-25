@@ -32,7 +32,7 @@ function generateTransaction(callback=null, broadcast=false){
         status  = 10, // 10 = Close Dispenser
         fee_sat = getSatoshis(vals['fee-amount']),
         command = (broadcast) ? 'cpDispenser' : 'createDispenser';
-    eval(command)(network, source, disp, vals.asset, 0, 0, 0, status, fee_sat, '', callback);
+    window[command](network, source, disp, vals.asset, 0, 0, 0, status, fee_sat, '', callback);
 }
 
 $(document).ready(function(){

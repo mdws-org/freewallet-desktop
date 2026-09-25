@@ -2279,7 +2279,6 @@ function resetAssetInfo(asset){
     $('#artwork-header').hide();
     $('#video-header').hide();
     $('#audio-header').hide();
-    $('#custom-content-header').hide();
     $('#artwork-image').attr('src','images/icons/xcp.png').hide();
     $('#artwork-stamp').attr('src','images/icons/xcp.png').hide();
     $('#video-wrapper').html('').hide();
@@ -6550,28 +6549,10 @@ function legacyJsonToCip25(o){
             }
         });
     }
-    if(o.html)
-        json.html = o.html;
-    if(json.description){
-        // Loop through description and detect attempts to inject HTML and javascript into description
-        var filters = ['<script', '<iframe', 'onload'],
-            desc    = String(json.description).replace('&lt;','<').replace('&gt;','>'),
-            html    = false;
-        filters.forEach(function(filter){
-            var re = new RegExp(filter, 'ig');
-            if(re.test(desc)){
-                console.log('matched on filter =',filter);
-                html = true;
-            }
-        });
-        if(html)
-            json.html = json.description;
-        // Reduce the description to plain text. A hand-rolled entity-unescape
-        // plus a <script> regex is fragile (it missed "</script >" and only
-        // replaced the first entity, and unescaping before stripping re-armed
-        // tags); DOM textContent strips every tag reliably in one step.
+    // The description is only ever shown as plain text; DOM textContent strips
+    // every tag in one step, entities included.
+    if(json.description)
         json.description = stripHtml(String(json.description)).trim();
-    }
     // console.log('--- Begin CIP25 JSON ---');
     // console.log(JSON.stringify(json));
     // console.log('--- End CIP25 JSON ---');
@@ -6931,7 +6912,7 @@ function showAssetArtwork(o){
             var vsrc = escapeHtml(video);
             if(videoKind=='youtube'){
                 el   = $('#video-wrapper-youtube'),
-                html = '<iframe src="' + vsrc + '" frameborder="0" allowfullscreen class="embedded-video"></iframe>';
+                html = '<iframe src="' + vsrc + '" sandbox="allow-scripts allow-same-origin allow-popups" frameborder="0" allowfullscreen class="embedded-video"></iframe>';
             } else {
                 var type = '';
                 if(ext=='mp4') type = 'video/mp4';
@@ -6949,17 +6930,13 @@ function showAssetArtwork(o){
             var asrc = escapeHtml(audio);
             if(audioKind=='soundcloud'){
                 el = $('#audio-wrapper-soundcloud');
-                html = '<iframe src="https://w.soundcloud.com/player/?url=' + asrc + '" frameborder="0" allowfullscreen class="soundcloud-audio" style="width:100%;"></iframe>';
+                html = '<iframe src="https://w.soundcloud.com/player/?url=' + asrc + '" sandbox="allow-scripts allow-same-origin allow-popups" frameborder="0" allowfullscreen class="soundcloud-audio" style="width:100%;"></iframe>';
             } else {
                 html = '<audio src="' + asrc + '" autoplay="true" controls loop preload></audio>';
             }
             el.html(html).show();
         }
 
-    }
-    if(o.html){
-        $('#custom-content-header').show();
-        $('#custom-content-wrapper').show();
     }
     // console.log('audio=',audio);
     // console.log('video=',video);

@@ -23,7 +23,7 @@ This software is provided as is, with no warranty and no support commitment. Bac
 
 ## Install
 
-No release is published yet. CI attaches a dmg to each run on the [Actions tab](https://github.com/mdws-org/freewallet-desktop/actions). Released builds will appear on the [releases page](https://github.com/mdws-org/freewallet-desktop/releases).
+Releases are on the [releases page](https://github.com/mdws-org/freewallet-desktop/releases); each carries the dmg, its sha256, and the build's verification log. CI also attaches a dmg to each run on the [Actions tab](https://github.com/mdws-org/freewallet-desktop/actions). What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
 
 These builds carry an ad-hoc signature. They are not signed with an Apple Developer ID and are not notarized, so Gatekeeper refuses to open them.
 

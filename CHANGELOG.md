@@ -1,3 +1,43 @@
+# Changelog
+
+Releases of this fork. Upstream's history ends at 2.0.4 (jdogresorg/freewallet-desktop, commit `fdb7f2f`).
+
+## 2.1.0
+
+First release of the fork. Apple Silicon only. The bundle has an ad-hoc signature, so follow the Open Anyway steps in the README to open it.
+
+### Wallet encryption
+
+- The wallet is encrypted at rest with a PBKDF2-derived key (SHA-256, 310,000 iterations, per-wallet salt) and a stored verifier. The password itself is no longer stored in any form. The previous format derived its key with one round of MD5 and kept the password beside the ciphertext, which allowed an offline guess-check with no work factor.
+- A wallet password is required. A new or changed password must have at least 12 characters, including a number.
+- An existing wallet is re-encrypted the first time it is unlocked after installing this build. A wallet that already had a password keeps it, even a shorter one. A wallet that had none must choose one. The previous copy is retained until that unlock succeeds, and if the re-encrypted copy is damaged before then, the wallet is rebuilt from the retained copy.
+- The password can be changed under Settings, on the Wallet tab. The change asks for the current password.
+- The application never opens a wallet without the password, and a damaged wallet record can no longer lead to the create-wallet screen.
+
+### Auto-BTCpay
+
+- Auto-BTCpay keeps a copy of the wallet seed and imported keys in the application's session memory for as long as it is enabled, including when the wallet is locked, until Auto-BTCpay is disabled, the wallet is logged out, or the application is closed. The order form states this where auto-pay is chosen, and so does the dialog that asks for the password at launch.
+- Disabling Auto-BTCpay from that dialog now disables it for every order and discards the copy. Before, the button only closed the dialog.
+- A manually paid order no longer leaves a copy of the seed in session memory.
+- During an automatic payment for a locked wallet, every other action now sees a locked wallet. Before, the interface treated the wallet as unlocked for the length of the network call.
+- The password and payment prompts related to BTCpay wait until any open password dialog has been answered instead of opening on top of it.
+
+### Interface security
+
+- Data rendered in the interface is escaped. The fixes cover the high-severity CodeQL findings for cross-site scripting, sanitization, URL scheme checks and regular-expression denial of service.
+- Media embedded from token descriptions is limited to an allowlist of hosts and loaded in a sandboxed frame.
+- The application page declares a Content-Security-Policy that pins a hash for every inline script and allows no other inline or evaluated script.
+
+### Build
+
+- Native Apple Silicon build on NW.js 0.92.0. The Intel bundle can be built with `node build.js --all` but is not tested or published.
+- The application contains its runtime dependencies only. Build tooling is no longer bundled.
+- Continuous integration builds the bundle on every push, verifies its identity, contents and signature, runs the wallet tests, and attaches a disk image to the run. A `v*` tag publishes that image as a release.
+
+## Upstream releases
+
+The entries below are the upstream changelog as it stood at the fork point, kept as they were.
+
 Version 2.0.4 - August 1st, 2025
 - migrated `get_running_info` to v2 API
 - migrated `getrawtransaction` and `get_unspent_utxos` to v2 API

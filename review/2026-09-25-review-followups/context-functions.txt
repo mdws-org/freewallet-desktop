@@ -1,0 +1,631 @@
+304: function initWallet(){
+305:     var hasV2 = readVault()!==null,
+306:         hasV1 = ls.getItem('wallet')!==null; // legacy layout still present (pre-migration or backup)
+307:     if(hasV2 || hasV1){
+308:         // A stale decrypted copy may linger in session storage from a previous
+309:         // load, but the derived key is memory-only and gone after a reload, so
+310:         // always start locked and require the password. Nothing auto-decrypts.
+311:         ss.removeItem('wallet');
+312:         FW.WALLET_KEYS = {};
+313:         FW.WALLET_ENCKEY = null;
+314:         // The Auto-BTCpay check runs once the wallet is open. Its own dialog
+315:         // asks for the password too, and a legacy wallet cannot answer it until
+316:         // migration has produced a v2 vault, so it must not open on top of the
+317:         // unlock or migrate dialog. Declining to unlock skips the check for this
+318:         // launch; matched orders then fall back to the manual payment dialog.
+319:         if(hasV2){
+320:             // v2 vault present (possibly with legacy backup blobs still beside
+321:             // it): prompt for the password to unlock.
+322:             dialogPassword(false, checkBtcpayAuth);
+323:         } else {
+324:             // Only a legacy v1 wallet on disk: migrate to v2 on unlock.
+325:             dialogMigrate(checkBtcpayAuth);
+326:         }
+327:     } else {
+328:         dialogWelcome();
+329:     }
+330:     // Trigger an immediate check of if we need to update the wallet information (prices/balances)
+331:     checkUpdateWallet();
+332:     // Check every 60 seconds if we should update the wallet information
+333:     setInterval(checkUpdateWallet, 60000);
+334:     updateWalletOptions();
+335:     // Populate the oracle list
+336:     updateOracleList();
+337:     // Populate the donation list
+338:     updateDonationList();
+339: }
+
+342: function resetWallet(){
+343:     ls.removeItem('walletVault');
+344:     ls.removeItem('wallet');
+345:     ls.removeItem('walletKeys');
+346:     ls.removeItem('walletPassword');
+347:     ls.removeItem('walletCrypto');
+348:     ls.removeItem('wallet.v1bak');
+349:     ls.removeItem('walletKeys.v1bak');
+350:     ls.removeItem('walletPassword.v1bak');
+351:     ls.removeItem('walletEncrypted');
+352:     ls.removeItem('walletAddress');
+353:     ls.removeItem('walletAddresses');
+354:     ls.removeItem('walletAddressLabel');
+355:     ls.removeItem('walletBalances');
+356:     ls.removeItem('walletBalanceOptions');
+357:     ls.removeItem('walletFormat');
+358:     ls.removeItem('walletHistory');
+359:     ls.removeItem('walletNetwork');
+360:     ls.removeItem('walletMarkets');
+361:     ls.removeItem('walletMarketOptions');
+362:     ls.removeItem('walletDispeners');
+363:     ls.removeItem('walletDispenserOptions');
+364:     ls.removeItem('btcpayOrders');
+365:     ls.removeItem('btcpayMatches');
+366:     ls.removeItem('btcpayQueue');
+367:     ss.removeItem('btcpayWallet');
+368:     ss.removeItem('btcpayKeys');
+369:     ss.removeItem('wallet');
+370:     ss.removeItem('walletPassword');
+371:     ss.removeItem('skipWalletAuth');
+372:     FW.WALLET_ADDRESS   = null;
+373:     FW.WALLET_ADDRESSES = []
+374:     FW.WALLET_BALANCES  = [];
+375:     FW.WALLET_HISTORY   = [];
+376:     FW.WALLET_KEYS      = {};
+377:     FW.WALLET_ENCKEY    = null;
+378:     FW.WALLET_FORMAT    = 0;
+379:     FW.WALLET_ENCRYPTED = 0;
+380:     FW.BTCPAY_ORDERS    = {};
+381:     FW.BTCPAY_MATCHES   = {};
+382:     FW.BTCPAY_QUEUE     = {};
+383:     FW.BTCPAY_ORDERS    = {}
+384:     FW.BASE_MARKETS     = FW.DEFAULT_MARKETS;
+385:     FW.BASE_DISPENSERS  = FW.DEFAULT_DISPENSERS;
+386: }
+
+505: function readVault(){
+506:     try {
+507:         var v = ls.getItem('walletVault');
+508:         return v ? JSON.parse(v) : null;
+509:     } catch(e){
+510:         return null;
+511:     }
+512: }
+
+519: function writeVault( descriptor ){
+520:     if(!FW.WALLET_ENCKEY) throw new Error('writeVault called with no session key');
+521:     var wallet = getWallet();
+522:     if(wallet===null || wallet===undefined) return false;
+523:     ls.setItem('walletVault', JSON.stringify({
+524:         v: 2,
+525:         crypto: descriptor,
+526:         wallet: WalletCrypto.encrypt(wallet, FW.WALLET_ENCKEY),
+527:         keys:   WalletCrypto.encrypt(JSON.stringify(FW.WALLET_KEYS), FW.WALLET_ENCKEY)
+528:     }));
+529:     ls.setItem('walletEncrypted', 1);
+530:     FW.WALLET_ENCRYPTED = 1;
+531:     ss.removeItem('skipWalletAuth');
+532:     return true;
+533: }
+
+539: function decryptWallet( keyset ){
+540:     if(!keyset) keyset = FW.WALLET_ENCKEY;
+541:     if(!keyset) return false;
+542:     var v = readVault();
+543:     if(!v || !v.wallet) return false;
+544:     var wallet   = WalletCrypto.decrypt(v.wallet, keyset);
+545:     if(wallet===null) return false;
+546:     var privkeys = v.keys ? WalletCrypto.decrypt(v.keys, keyset) : '{}';
+547:     if(privkeys===null) return false;
+548:     FW.WALLET_ENCKEY = keyset;
+549:     ss.setItem('wallet', wallet);
+550:     FW.WALLET_KEYS = JSON.parse(privkeys);
+551:     ss.removeItem('skipWalletAuth');
+552:     // A successful v2 unlock confirms the vault is good, so any pre-migration
+553:     // legacy blobs kept as a safety net can now be discarded.
+554:     discardV1Backup();
+555:     return true;
+556: }
+
+564: function persistWallet(){
+565:     var v = readVault();
+566:     if(!v || !v.crypto) throw new Error('persistWallet called with no vault');
+567:     return writeVault(v.crypto);
+568: }
+
+574: function changeWalletPassword( newPassword ){
+575:     if(!newPassword) throw new Error('changeWalletPassword requires a password');
+576:     if(!getWallet()) return false;
+577:     var mk = WalletCrypto.makeCrypto(newPassword);
+578:     FW.WALLET_ENCKEY = mk.keyset;
+579:     return writeVault(mk.descriptor);
+580: }
+
+588: function migrateWalletToV2( enteredPassword, newPassword ){
+589:     var wasEncrypted = parseInt(ls.getItem('walletEncrypted'))===1,
+590:         storedPw     = ls.getItem('walletPassword');
+591:     var v1pw;
+592:     if(wasEncrypted){
+593:         if(!WalletCrypto.legacyVerify(enteredPassword, storedPw)) return false;
+594:         v1pw = enteredPassword;
+595:     } else {
+596:         v1pw = WalletCrypto.legacyConveniencePassword(storedPw);
+597:     }
+598:     var wallet   = WalletCrypto.decryptV1(ls.getItem('wallet'), v1pw),
+599:         keysBlob = ls.getItem('walletKeys'),
+600:         privkeys = keysBlob ? WalletCrypto.decryptV1(keysBlob, v1pw) : '{}';
+601:     if(wallet===null || privkeys===null) return false;
+602:     // The new password: the existing one for an already-encrypted wallet, or the
+603:     // user's chosen password for a former convenience wallet.
+604:     var newPw = wasEncrypted ? enteredPassword : newPassword;
+605:     if(!newPw) return false;
+606:     var mk = WalletCrypto.makeCrypto(newPw),
+607:         encWallet = WalletCrypto.encrypt(wallet, mk.keyset),
+608:         encKeys   = WalletCrypto.encrypt(privkeys, mk.keyset);
+609:     // Verify the new blobs decrypt back to the identical plaintext BEFORE writing
+610:     // anything.
+611:     if(WalletCrypto.decrypt(encWallet, mk.keyset)!==wallet) return false;
+612:     if(WalletCrypto.decrypt(encKeys, mk.keyset)!==privkeys) return false;
+613:     // Write the v2 vault as one atomic record. The legacy v1 keys
+614:     // (wallet/walletKeys/walletPassword) are left in place untouched -- they are
+615:     // the natural backup, and are removed only on the next successful v2 unlock
+616:     // (discardV1Backup). So a crash during migration leaves either the intact v1
+617:     // wallet or a fully-written v2 vault, never a half-migrated wallet.
+618:     FW.WALLET_ENCKEY = mk.keyset;
+619:     ss.setItem('wallet', wallet);
+620:     FW.WALLET_KEYS = JSON.parse(privkeys);
+621:     writeVault(mk.descriptor);
+622:     return true;
+623: }
+
+627: function discardV1Backup(){
+628:     ls.removeItem('wallet');
+629:     ls.removeItem('walletKeys');
+630:     ls.removeItem('walletPassword');
+631:     // Older layouts wrote separate *.v1bak keys; remove those too if present.
+632:     ls.removeItem('wallet.v1bak');
+633:     ls.removeItem('walletKeys.v1bak');
+634:     ls.removeItem('walletPassword.v1bak');
+635: }
+
+664: function lockWallet(){
+665:     ss.removeItem('wallet');
+666:     ss.removeItem('walletPassword');
+667:     // Drop the derived key from memory so a locked wallet holds no secret.
+668:     FW.WALLET_ENCKEY = null;
+669:     FW.WALLET_KEYS = {};
+670: }
+
+913: function updateWalletOptions(){
+914:     // Handle updating lock/unlock icon based on state
+915:     var icon = $('#lock > i'),
+916:         lock = $('#lock');
+917:     if(!ss.getItem('wallet')){
+918:         icon.removeClass('fa-unlock').addClass('fa-lock');
+919:         lock.attr('data-original-title','<div class="nowrap">Unlock Wallet</div>');
+920:     } else {
+921:         icon.removeClass('fa-lock').addClass('fa-unlock');
+922:         lock.attr('data-original-title', '<div class="nowrap">Lock Wallet</div>');
+923:     }
+924:     // Handle updating the settings screen
+925:     $('#settings-address').val(FW.WALLET_ADDRESS);
+926:     $('#settings-network').val(FW.WALLET_NETWORK);
+927:     $('#settings-address-label').val(FW.WALLET_ADDRESS_LABEL);
+928:     // Handle updating footer info
+929:     var net   = (FW.WALLET_NETWORK==2) ? 'testnet' : 'mainnet';
+930:         last  = ls.getItem('networkInfoLastUpdated') || '',
+931:         block = (FW.NETWORK_INFO.network_info) ? FW.NETWORK_INFO.network_info[net].block_height : 'NA';
+932:     $('.footer-current-block').text('Block ' + numeral(block).format('0,0'));
+933:     $('.footer-last-updated').html('Last updated <span data-livestamp='  + last.substr(0,last.length-3) + ' class="nowrap"></span>');
+934:     $('.footer-current-price').text('$' + numeral(getAssetPrice('XCP')).format('0,0.00') + ' USD');
+935:     var info = getWalletAddressInfo(FW.WALLET_ADDRESS);
+936:     if(info.type==3){
+937:         $('#action-view-privkey').hide();
+938:         $('#action-send').hide();
+939:         $('#action-sign-message').hide();
+940:         $('#action-sign-transaction').hide();
+941:         $('#action-dividend').hide();
+942:         $('#action-broadcast-message').hide();
+943:         $('#header-token-actions').hide();
+944:         $('#action-asset-create').hide();
+945:         $('#action-asset-description').hide();
+946:         $('#action-asset-supply').hide();
+947:         $('#action-asset-transfer').hide();
+948:         $('#action-asset-lock').hide();
+949:     } else {
+950:         $('#action-view-privkey').show();
+951:         $('#action-send').show();
+952:         $('#action-sign-message').show();
+953:         $('#action-sign-transaction').show();
+954:         $('#action-dividend').show();
+955:         $('#action-broadcast-message').show();
+956:         $('#header-token-actions').show();
+957:         $('#action-asset-create').show();
+958:         $('#action-asset-description').show();
+959:         $('#action-asset-supply').show();
+960:         $('#action-asset-transfer').show();
+961:         $('#action-asset-lock').show();
+962:     }
+963: }
+
+854: function isValidWalletPassword( password ){
+855:     var v = readVault();
+856:     if(!v || !v.crypto) return false;
+857:     var key = WalletCrypto.verifyPassword(password, v.crypto);
+858:     return key ? key : false;
+859: }
+
+865: function validateNewWalletPassword( password, confirm ){
+866:     if(password.length < 12)
+867:         return 'Wallet password must be at least 12 characters long';
+868:     if(!/\d/.test(password))
+869:         return 'Wallet password must contain at least 1 number';
+870:     if(typeof confirm!='undefined' && password!=confirm)
+871:         return 'Password and Confirmation password do not match!';
+872:     return false;
+873: }
+
+1043: function checkAutoLock(){
+1044:     // If wallet is encrypted, unlocked, auto-lock is enabled, and we are past the auto-lock time, then lock the wallet
+1045:     if(FW.WALLET_ENCRYPTED && ss.getItem('wallet') && FW.WALLET_AUTOLOCK>0 && (FW.WALLET_LAST_UNLOCKED + (FW.WALLET_AUTOLOCK * 60 * 1000)) < Date.now()){
+1046:         lockWallet();
+1047:         updateWalletOptions();
+1048:     }
+1049: }
+
+1073: function checkBtcpayAuth(){
+1074:     // console.log('checkBtcpayAuth FW.BTCPAY_ORDERS=',FW.BTCPAY_ORDERS);
+1075:     var enabled = false;
+1076:     $.each(['mainnet','testnet'],function(ndx, network){
+1077:         $.each(FW.BTCPAY_ORDERS[network], function(address, orders){
+1078:             $.each(orders, function(order, autopay){
+1079:                 if(autopay==1)
+1080:                     enabled = true;
+1081:             });
+1082:         });
+1083:     });
+1084:     // If Auto-BTCpay is enabled, make sure we have unlocked wallet available
+1085:     var a = ss.getItem('btcpayWallet'),
+1086:         b = ss.getItem('wallet');
+1087:     if(enabled && a==null){
+1088:         if(b){
+1089:             ss.setItem('btcpayWallet',b);
+1090:             // Stash imported keys with the seed (see the enable dialog).
+1091:             ss.setItem('btcpayKeys', JSON.stringify(FW.WALLET_KEYS));
+1092:         } else {
+1093:             dialogEnableBtcpay();
+1094:         }
+1095:     }
+1096: }
+
+1243: function processBtcpayQueue(){
+1244:     // console.log('processBtcpayQueue FW.BTCPAY_QUEUE=',FW.BTCPAY_QUEUE);
+1245:     cleanupBtcpay();
+1246:     // Set placeholder to hold data on first manual btcpay tx 
+1247:     var data = false,
+1248:         a    = ss.getItem('wallet'),
+1249:         b    = ss.getItem('btcpayWallet');
+1250:     // Loop through queue and process any valid order matches
+1251:     $.each(['mainnet','testnet'], function(ndx, network){
+1252:         $.each(FW.BTCPAY_QUEUE[network], function(idx, o){
+1253:             if(o.autopay && (a||b)){
+1254:                 autoBtcpay(network, o);
+1255:             } else {
+1256:                 data = o;
+1257:                 data.network = network; 
+1258:                 return false; // bail out on first match
+1259:             }
+1260:         });
+1261:     });
+1262:     // If we detected a transaction which needs manual processing, display the dialog box to the user
+1263:     if(data){
+1264:         // Check if the BTCPay dialog box is visible... if so, bail out
+1265:         if($('#btcpay-form').length)
+1266:             return;
+1267:         FW.DIALOG_DATA = data;
+1268:         dialogBTCpay(false);
+1269:     }
+1270: }
+
+1273: function autoBtcpay(network, o){
+1274:     // console.log('autoBtcpay network, o=', network, o);
+1275:     var a       = ss.getItem('wallet'),
+1276:         b       = ss.getItem('btcpayWallet'),
+1277:         c       = false, // Flag to indicate if we should delete wallet after tx
+1278:         id      = o.tx0_hash + '_' + o.tx1_hash,
+1279:         fee     = FW.NETWORK_INFO.fee_info.optimal, // Use high priority fee for order matches
+1280:         size    = 350,                              // 1 input is about 300 bytes... (TODO - Get actual tx size via pre-flight check)
+1281:         fee_sat = getSatoshis(((fee / 1000) * size) * 0.00000001);
+1282:     // Check status of the wallet and hot-swap wallet into place if needed
+1283:     if(a==null){
+1284:         // If no wallet/btcpayWallet is found, bail out
+1285:         if(b==null){
+1286:             return;
+1287:         } else {
+1288:             ss.setItem('wallet',b);
+1289:             // Restore the stashed imported keys so imported-address orders can be
+1290:             // signed while locked; HD addresses re-derive from the seed anyway.
+1291:             var bk = ss.getItem('btcpayKeys');
+1292:             if(bk){
+1293:                 try { FW.WALLET_KEYS = JSON.parse(bk); } catch(e){ FW.WALLET_KEYS = {}; }
+1294:             }
+1295:             c = true;
+1296:         }
+1297:     }
+1298:     // Handle automatically creating/signing/broadcasting the BTCpay tx
+1299:     cpBtcpay(network, o.source, id, fee_sat, function(tx){
+1300:         // Only proceed if we have a valid tx hash for the broadcast tx... otherwise leave in queue so we can try again
+1301:         if(tx){
+1302:             dialogMessage('<i class="fa fa-lg fa-check"></i> BTCPay Successful', '<center>Your BTC payment has been broadcast to the network and your order should complete shortly.' +
+1303:                           '<br/><br/><a class="btn btn-success" href="' + FW.EXPLORER_API + '/tx/' + tx + '" target="_blank">View Transaction</a></center>');
+1304:             // Remove the order match from the queue and check the queue again after a brief delay
+1305:             removeFromBtcpayQueue(o.tx0_hash, o.tx1_hash);
+1306:             setTimeout(function(){ processBtcpayQueue(); },1000);
+1307:         }
+1308:         // Handle removing the hot-swapped wallet + restored keys if needed, so a
+1309:         // locked session returns to holding no secret in memory after the tx.
+1310:         if(c){
+1311:             ss.removeItem('wallet');
+1312:             FW.WALLET_KEYS = {};
+1313:         }
+1314:     });
+1315: }
+
+4145: function dialogNewWalletPassword( callback ){
+4146:     BootstrapDialog.show({
+4147:         type: 'type-default',
+4148:         title: '<i class="fa fa-lg fa-fw fa-lock"></i> Set a wallet password',
+4149:         cssClass: 'btc-wallet-password',
+4150:         closable: false,
+4151:         closeByBackdrop: false,
+4152:         message: function(dialog){
+4153:             var msg = $('<div></div>');
+4154:             msg.append('<input name="wallet_password" type="text" class="form-control" placeholder="Enter Password" autocomplete="off" style="-webkit-text-security: disc;"/>');
+4155:             msg.append('<input name="wallet_confirm_password" type="text" class="form-control" placeholder="Confirm Password" autocomplete="off" style="margin: 10px 0px; -webkit-text-security: disc" />');
+4156:             msg.append('<p class="justify no-bottom-margin">This password encrypts your wallet on this device. You will need it each time you open the wallet. It cannot be recovered if lost.</p>');
+4157:             return msg;
+4158:         },
+4159:         onshown: function(dialog){
+4160:             $('[name="wallet_password"]').focus();
+4161:         },
+4162:         buttons:[{
+4163:             label: 'Cancel',
+4164:             icon: 'fa fa-lg fa-fw fa-thumbs-down',
+4165:             cssClass: 'btn-danger',
+4166:             action: function(dialog){
+4167:                 dialog.close();
+4168:                 dialogWelcome();
+4169:             }
+4170:         },{
+4171:             label: 'Ok',
+4172:             icon: 'fa fa-lg fa-fw fa-thumbs-up',
+4173:             cssClass: 'btn-success',
+4174:             hotkey: 13,
+4175:             action: function(dialog){
+4176:                 var pass    = $('[name="wallet_password"]').val(),
+4177:                     confirm = $('[name="wallet_confirm_password"]').val(),
+4178:                     err     = validateNewWalletPassword(pass, confirm);
+4179:                 if(err){
+4180:                     dialogMessage(null, err, true);
+4181:                 } else {
+4182:                     dialog.close();
+4183:                     if(typeof callback=='function') callback(pass);
+4184:                 }
+4185:             }
+4186:         }]
+4187:     });
+4188: }
+
+4195: function dialogMigrate( callback ){
+4196:     var wasEncrypted = parseInt(ls.getItem('walletEncrypted'))===1;
+4197:     var title = wasEncrypted ? 'Upgrade wallet security' : 'Set a wallet password';
+4198:     BootstrapDialog.show({
+4199:         type: 'type-default',
+4200:         title: '<i class="fa fa-lg fa-fw fa-lock"></i> ' + title,
+4201:         cssClass: 'btc-wallet-password',
+4202:         closable: false,
+4203:         closeByBackdrop: false,
+4204:         message: function(dialog){
+4205:             var msg = $('<div></div>');
+4206:             if(wasEncrypted){
+4207:                 msg.append('<p class="justify">Your wallet\'s encryption is being upgraded to a stronger format. Enter your existing wallet password to continue.</p>');
+4208:                 msg.append('<input name="wallet_password" type="text" class="form-control" placeholder="Enter Password" autocomplete="off" style="-webkit-text-security: disc;"/>');
+4209:             } else {
+4210:                 msg.append('<p class="justify">This wallet was stored without a password. Choose a password now to encrypt it; you will need it each time you open the wallet.</p>');
+4211:                 msg.append('<input name="wallet_password" type="text" class="form-control" placeholder="Enter Password" autocomplete="off" style="-webkit-text-security: disc;"/>');
+4212:                 msg.append('<input name="wallet_confirm_password" type="text" class="form-control" placeholder="Confirm Password" autocomplete="off" style="margin: 10px 0px; -webkit-text-security: disc" />');
+4213:             }
+4214:             return msg;
+4215:         },
+4216:         onshown: function(dialog){
+4217:             $('[name="wallet_password"]').focus();
+4218:         },
+4219:         buttons:[{
+4220:             label: 'Ok',
+4221:             icon: 'fa fa-lg fa-fw fa-thumbs-up',
+4222:             cssClass: 'btn-success',
+4223:             hotkey: 13,
+4224:             action: function(dialog){
+4225:                 var pass = $('[name="wallet_password"]').val(),
+4226:                     err  = false, ok = false;
+4227:                 if(wasEncrypted){
+4228:                     // Existing password: verified inside migrateWalletToV2.
+4229:                     ok = migrateWalletToV2(pass, null);
+4230:                     if(!ok) err = 'Invalid password';
+4231:                 } else {
+4232:                     // New password: the requirements for any password being set.
+4233:                     err = validateNewWalletPassword(pass, $('[name="wallet_confirm_password"]').val());
+4234:                     if(!err){
+4235:                         ok = migrateWalletToV2(null, pass);
+4236:                         if(!ok) err = 'Could not upgrade the wallet';
+4237:                     }
+4238:                 }
+4239:                 if(err){
+4240:                     dialogMessage(null, err, true);
+4241:                 } else if(ok){
+4242:                     dialog.close();
+4243:                     FW.WALLET_LAST_UNLOCKED = Date.now();
+4244:                     updateWalletOptions();
+4245:                     // A wallet that already had a password keeps it, even one
+4246:                     // that would not be accepted for a new wallet. The upgrade
+4247:                     // is not blocked on changing it, since that would stop a
+4248:                     // user mid-migration, but the weaker password limits what
+4249:                     // the stronger key derivation can do, so say so. Unlocking
+4250:                     // never applies the new-password rules, so the kept
+4251:                     // password keeps working.
+4252:                     if(wasEncrypted && validateNewWalletPassword(pass)){
+4253:                         dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet ready',
+4254:                             'Your wallet encryption has been upgraded and your wallet is unlocked.' +
+4255:                             '<br/><br/><b>Your password does not meet the requirements now applied to a new wallet password</b> (at least 12 characters, including a number). ' +
+4256:                             'It still works, but a stronger password would make the new encryption meaningfully harder to attack. ' +
+4257:                             'You can change it under Settings, on the Wallet tab.');
+4258:                     } else {
+4259:                         dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet ready', 'Your wallet encryption has been upgraded and your wallet is unlocked.');
+4260:                     }
+4261:                     if(typeof callback=='function') callback();
+4262:                 }
+4263:             }
+4264:         }]
+4265:     });
+4266: }
+
+4268: function dialogPassword( enable, callback ){
+4269:     var title = (enable) ? 'Enter new wallet password' : 'Enter wallet password';
+4270:     BootstrapDialog.show({
+4271:         type: 'type-default',
+4272:         title: '<i class="fa fa-lg fa-fw fa-lock"></i> ' + title,
+4273:         cssClass: 'btc-wallet-password',
+4274:         closable: false,
+4275:         closeByBackdrop: false,
+4276:         message: function(dialog){
+4277:             var msg = $('<div></div>');
+4278:             msg.append('<input name="wallet_password" type="text" class="form-control"  placeholder="Enter Password" autocomplete="off" style="-webkit-text-security: disc;"/>');
+4279:             if(enable){
+4280:                 msg.append('<input name="wallet_confirm_password" type="text" class="form-control"  placeholder="Confirm Password" autocomplete="off" style="margin: 10px 0px; -webkit-text-security: disc" />');
+4281:                 msg.append('<p class="justify no-bottom-margin">This password will be used to encrypt your wallet to give you an additional layer of protection against unauthorized use.</p>')
+4282:             }
+4283:             return msg;
+4284:         },
+4285:         onshown: function(dialog){
+4286:             $('[name="wallet_password"]').focus();
+4287:         },
+4288:         buttons:[{
+4289:             label: 'Cancel',
+4290:             icon: 'fa fa-lg fa-fw fa-thumbs-down',       
+4291:             cssClass: 'btn-danger', 
+4292:             action: function(dialog){
+4293:                 // Set flag to indicate user has skipped auth, and not prompt again until needed.
+4294:                 if(!enable)
+4295:                     ss.setItem('skipWalletAuth',1)
+4296:                 dialog.close();
+4297:                 updateWalletOptions();
+4298:             }
+4299:         },{
+4300:             label: 'Ok',
+4301:             icon: 'fa fa-lg fa-fw fa-thumbs-up',       
+4302:             cssClass: 'btn-success', 
+4303:             hotkey: 13,
+4304:             action: function(dialog){
+4305:                 var pass = $('[name="wallet_password"]').val(),
+4306:                     err  = false;
+4307:                 if(enable){
+4308:                     // Set a new password: the new-password rules apply, then the
+4309:                     // vault is re-derived and re-encrypted under it.
+4310:                     err = validateNewWalletPassword(pass, $('[name="wallet_confirm_password"]').val());
+4311:                     if(!err && !changeWalletPassword(pass))
+4312:                         err = 'The wallet password could not be changed';
+4313:                     if(!err){
+4314:                         updateWalletOptions();
+4315:                         dialog.close();
+4316:                         dialogMessage('<i class="fa fa-lg fa-fw fa-lock"></i> Wallet password changed', 'Your wallet password has been changed and your wallet re-encrypted.');
+4317:                     }
+4318:                 } else {
+4319:                     // Unlock: the stored KDF verifier is the only check applied
+4320:                     // to an existing password; on success it returns the derived
+4321:                     // key to decrypt with. A verified password whose vault still
+4322:                     // fails to decrypt leaves the wallet locked and untouched.
+4323:                     var key = isValidWalletPassword(pass);
+4324:                     if(!key){
+4325:                         err = 'Invalid password';
+4326:                     } else if(!decryptWallet(key)){
+4327:                         err = 'The password is correct but the stored wallet could not be decrypted. The wallet stays locked and nothing was changed. If this happens again, restore the wallet from its passphrase.';
+4328:                     } else {
+4329:                         dialog.close();
+4330:                         FW.WALLET_LAST_UNLOCKED = Date.now();
+4331:                         dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Wallet unlocked', 'Your wallet is now unlocked and available for use');
+4332:                         updateWalletOptions();
+4333:                     }
+4334:                 }
+4335:                 if(err){
+4336:                     dialogMessage(null, err, true);
+4337:                 } else if(typeof callback=='function'){
+4338:                     // The callback runs only once the password action succeeded.
+4339:                     callback();
+4340:                 }
+4341:             }
+4342:         }]
+4343:     });    
+4344: }
+
+4508: function dialogCheckLocked(action, callback){
+4509:     if(!ss.getItem('wallet')){
+4510:         dialogMessage('Wallet Locked!', 'You will need to unlock your wallet before you can ' + action, true, true, callback);
+4511:         return true;
+4512:     }
+4513: }
+
+4882: function dialogEnableBtcpay(){
+4883:     BootstrapDialog.show({
+4884:         type: 'type-default',
+4885:         title: '<i class="fa fa-lg fa-fw fa-question-circle"></i> Enable Auto-BTCpay?',
+4886:         cssClass: 'btc-wallet-password',
+4887:         closable: false,
+4888:         closeByBackdrop: false,
+4889:         message: function(dialog){
+4890:             var msg = $('<div></div>');
+4891:             msg.append('<input name="wallet_password" type="text" class="form-control"  placeholder="Enter Password" autocomplete="off" style="-webkit-text-security: disc;"/>');
+4892:             msg.append('<p class="justify" style="margin-top: 10px;">After you enable Auto-BTCpay, a copy of your wallet seed and any imported private keys is kept in this window\'s session memory until you log out or close the app, so that matched orders can be paid while the wallet is locked. Locking the wallet does not remove that copy.</p>');
+4893:             return msg;
+4894:         },
+4895:         onshown: function(dialog){
+4896:             $('[name="wallet_password"]').focus();
+4897:         },
+4898:         buttons:[{
+4899:             label: 'Disable',
+4900:             icon: 'fa fa-lg fa-fw fa-thumbs-down',       
+4901:             cssClass: 'btn-danger', 
+4902:             action: function(dialog){
+4903:                 // Confirm with user that auto-btcpay will be disabled
+4904:                 dialogConfirm('Disable Auto-BTCpay?','<div class="alert alert-danger text-center"><b>Notice</b>: Any order matches for BTC will need to be paid manually!</div>', false, false, function(){
+4905:                     dialog.close();
+4906:                 });
+4907:             }
+4908:         },{
+4909:             label: 'Enable',
+4910:             icon: 'fa fa-lg fa-fw fa-thumbs-up',       
+4911:             cssClass: 'btn-success', 
+4912:             hotkey: 13,
+4913:             action: function(dialog){
+4914:                 var pass = $('[name="wallet_password"]').val(),
+4915:                     err  = false;
+4916:                 // An existing password: the stored KDF verifier is the only check.
+4917:                 var key = isValidWalletPassword(pass);
+4918:                 if(!key){
+4919:                     err = 'Invalid password';
+4920:                 } else if(!decryptWallet(key)){
+4921:                     err = 'The password is correct but the stored wallet could not be decrypted. Auto-BTCpay was not enabled. If this happens again, restore the wallet from its passphrase.';
+4922:                 } else {
+4923:                     // Stash the seed and the imported private keys for auto-pay,
+4924:                     // then re-lock. Imported-address orders need their own keys;
+4925:                     // HD addresses re-derive from the seed.
+4926:                     ss.setItem('btcpayWallet', ss.getItem('wallet'));
+4927:                     ss.setItem('btcpayKeys', JSON.stringify(FW.WALLET_KEYS));
+4928:                     lockWallet();
+4929:                     dialog.close();
+4930:                     dialogMessage('<i class="fa fa-lg fa-fw fa-unlock"></i> Auto-BTCpay Enabled', 'Auto-BTCpay is now enabled and any order matches for BTC will be automatically paid');
+4931:                 }
+4932:                 if(err)
+4933:                     dialogMessage(null, err, true);
+4934:             }
+4935:         }]
+4936:     });  
+4937: }
+

@@ -27,6 +27,15 @@
                             </div>
                         </div>
                         <div class="form-group">
+                            <label class="col-sm-3 control-label no-right-padding">
+                                Password
+                                <a href="#" data-toggle="tooltip" title='This is the password that encrypts your wallet on this device' class="pull-right"><i class="fa fa-lg fa-question-circle-o margin-top-5" ></i></a>
+                            </label>
+                            <div class="col-sm-9">
+                                <a href="#" class="btn btn-default" id="settings-change-password"><i class="fa fa-lg fa-fw fa-key"></i> Change Wallet Password</a>
+                            </div>
+                        </div>
+                        <div class="form-group">
                             <label for="address" class="col-sm-3 control-label no-right-padding">
                                 Address
                                 <a href="#" data-toggle="tooltip" title='This is the current wallet address' class="pull-right"><i class="fa fa-lg fa-question-circle-o margin-top-5" ></i></a>
@@ -545,6 +554,14 @@ $(document).ready(function(){
         if(dialogCheckLocked('view your wallet passphrase'))
             return;
         dialogPassphrase();
+    }));
+
+    // Show the new-password dialog when user clicks the change password button
+    $('#settings-change-password').click($.debounce(100,function(e){
+        // Make sure wallet is unlocked
+        if(dialogCheckLocked('change your wallet password'))
+            return;
+        dialogPassword(true);
     }));
 
     // Handle updating the network

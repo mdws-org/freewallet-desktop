@@ -54,8 +54,8 @@
         <div class="col-xs-12" class="dialog-autobtcpay">
             <div class="checkbox dialog-autobtcpay-confirm" style="display: none" id="dialog-autobtcpay-yes">
                 <label>
-                    <input type="checkbox" name="autopay-confirm" value="Y"> 
-                    I understand that I need to  <u><i><b>keep FreeWallet open</b></i></u> in order for Auto-BTCPay to work.
+                    <input type="checkbox" name="autopay-confirm" value="Y">
+                    I understand that I need to  <u><i><b>keep FreeWallet open</b></i></u> in order for Auto-BTCPay to work, and that a copy of my wallet seed and imported keys stays in the app's session memory, <u><i><b>also while the wallet is locked</b></i></u>, until I disable Auto-BTCPay, log out, or close the app.
                 </label>
             </div>
             <div class="checkbox dialog-autobtcpay-confirm" style="display: none" id="dialog-autobtcpay-no">
@@ -220,11 +220,13 @@ $(document).ready(function(){
                         FW.BTCPAY_ORDERS[network][vals.source][tx] = autopay;
                         // Save data to disk
                         ls.setItem('btcpayOrders',JSON.stringify(FW.BTCPAY_ORDERS));
-                        // Save wallet to btcpayWallet (if user locks wallet, we can still sign transactions)
-                        var a = ss.getItem('wallet'),
-                            b = ss.getItem('btcpayWallet');
-                        if(b==null)
-                            ss.setItem('btcpayWallet',a);
+                        // An auto-pay order needs the seed and the imported keys
+                        // available after the wallet locks; the user agreed to
+                        // that above. A manually paid order needs nothing stashed.
+                        if(autopay==1 && ss.getItem('btcpayWallet')==null){
+                            ss.setItem('btcpayWallet', ss.getItem('wallet'));
+                            ss.setItem('btcpayKeys', JSON.stringify(FW.WALLET_KEYS));
+                        }
                     }
                 }
             }

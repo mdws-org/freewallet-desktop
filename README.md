@@ -13,7 +13,9 @@ Changes in this fork:
 - A native Apple Silicon build, replacing a build script that targeted Intel only and could not run under current versions of Node.
 - Build tooling is no longer copied into the packaged application.
 - Continuous integration builds a macOS bundle on every push, then checks its bundle identifier, confirms it excludes build tooling, and confirms that no part of it loads a library from outside the bundle other than the system frameworks.
-- Security fixes to the encryption that protects the wallet on disk, and to the escaping of data rendered in the interface. An existing wallet is re-encrypted the first time you unlock it after installing this build, and the previous copy is retained until that unlock succeeds.
+- Security fixes to the encryption that protects the wallet on disk, and to the escaping of data rendered in the interface. An existing wallet is re-encrypted the first time you unlock it after installing this build, and the previous copy is retained until that unlock succeeds. If the re-encrypted copy is damaged before that first unlock, the wallet is rebuilt from the retained copy.
+- A wallet password is required. A new or changed password must have at least 12 characters, including a number. A wallet that already had a password keeps it through the re-encryption, even a shorter one: unlocking checks the password against the stored wallet and applies no other rule. The password can be changed under Settings, on the Wallet tab, and the change asks for the current password.
+- Auto-BTCpay keeps a copy of the wallet seed and imported keys in the application's session memory while it is enabled, including while the wallet is locked, until Auto-BTCpay is disabled, the wallet is logged out, or the application is closed. The order form states this where auto-pay is chosen.
 
 Code in this repository is written with AI assistance and reviewed by one maintainer. It has had no independent security audit. The dmg attached to each CI run is build output, not a reviewed release.
 

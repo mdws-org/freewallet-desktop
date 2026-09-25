@@ -18,7 +18,9 @@ import { fileURLToPath } from 'node:url';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+// The end tag is matched the way the HTML tokenizer closes script data: "</script"
+// followed by whitespace, "/" or ">", then anything up to the next ">".
+const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script(?:[\s/][^>]*)?>/gi;
 const JS_TYPE_RE = /^(text\/javascript|application\/javascript|module)$/i;
 
 // Inline script bodies of one HTML document, verbatim, in document order.

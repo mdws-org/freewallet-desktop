@@ -15,8 +15,10 @@ test('inlineScripts keeps executable inline blocks verbatim and skips the rest',
         '<script type="application/json">{"k":1}</script>',
         '<script>   </script>',
         '<SCRIPT>d()</SCRIPT >',
+        '<script>e()</script\t\n bar>',
+        '<script>f("</scripts>")</script/>',
     ].join('\n');
-    assert.deepEqual(inlineScripts(html), ['  a(); \n', 'b()', 'c()', 'd()']);
+    assert.deepEqual(inlineScripts(html), ['  a(); \n', 'b()', 'c()', 'd()', 'e()', 'f("</scripts>")']);
 });
 
 test('hashSource matches the CSP sha256 form', () => {

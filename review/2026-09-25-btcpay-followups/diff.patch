@@ -1,0 +1,288 @@
+diff --git a/index.html b/index.html
+index 01ac658..77a76eb 100644
+--- a/index.html
++++ b/index.html
+@@ -222,7 +222,7 @@
+             // Setup listener on lock/unlock button
+             // buffer the click event by 100ms to prevent issues when users click item multiple times
+             $('#lock').click($.debounce(100,function(e){
+-                if(ss.getItem('wallet')){
++                if(isWalletUnlocked()){
+                     // Lock wallet
+                     lockWallet();
+                     updateWalletOptions();
+diff --git a/js/freewallet-desktop.js b/js/freewallet-desktop.js
+index 393ef8c..510c69a 100644
+--- a/js/freewallet-desktop.js
++++ b/js/freewallet-desktop.js
+@@ -320,7 +320,9 @@ function initWallet(){
+         // is locked and the check asks (dialogEnableBtcpay), which is also
+         // where auto-pay can be turned off. A legacy wallet cannot answer that
+         // dialog until migration has produced a v2 vault, so the migrate
+-        // dialog runs the check only on success.
++        // dialog runs the check only on success. The manual-payment prompt for
++        // a queued match is held back by processBtcpayQueue itself while any
++        // password dialog is on screen.
+         if(hasV2){
+             // v2 vault present (possibly with legacy backup blobs still beside
+             // it): prompt for the password to unlock.
+@@ -678,6 +680,14 @@ function getWallet(){
+     return ss.getItem('wallet');
+ }
+ 
++// Whether the user has unlocked the wallet in this session. The session seed
++// alone does not prove it: autoBtcpay copies the Auto-BTCpay stash into
++// ss 'wallet' for the length of a payment while the wallet is locked. The
++// derived key exists only after a password was verified, so both are required.
++function isWalletUnlocked(){
++    return ss.getItem('wallet')!==null && !!FW.WALLET_ENCKEY;
++}
++
+ // Get 12-word passphrase
+ function getWalletPassphrase(){
+     var w = getWallet(),
+@@ -953,7 +963,7 @@ function updateWalletOptions(){
+     // Handle updating lock/unlock icon based on state
+     var icon = $('#lock > i'),
+         lock = $('#lock');
+-    if(!ss.getItem('wallet')){
++    if(!isWalletUnlocked()){
+         icon.removeClass('fa-unlock').addClass('fa-lock');
+         lock.attr('data-original-title','<div class="nowrap">Unlock Wallet</div>');
+     } else {
+@@ -1081,7 +1091,7 @@ function checkUpdateWallet(){
+ // Check if we should auto-lock wallet based on the users preferences
+ function checkAutoLock(){
+     // If wallet is encrypted, unlocked, auto-lock is enabled, and we are past the auto-lock time, then lock the wallet
+-    if(FW.WALLET_ENCRYPTED && ss.getItem('wallet') && FW.WALLET_AUTOLOCK>0 && (FW.WALLET_LAST_UNLOCKED + (FW.WALLET_AUTOLOCK * 60 * 1000)) < Date.now()){
++    if(FW.WALLET_ENCRYPTED && isWalletUnlocked() && FW.WALLET_AUTOLOCK>0 && (FW.WALLET_LAST_UNLOCKED + (FW.WALLET_AUTOLOCK * 60 * 1000)) < Date.now()){
+         lockWallet();
+         updateWalletOptions();
+     }
+@@ -1120,9 +1130,11 @@ function checkBtcpayAuth(){
+             });
+         });
+     });
+-    // If Auto-BTCpay is enabled, make sure we have unlocked wallet available
++    // If Auto-BTCpay is enabled, make sure we have unlocked wallet available.
++    // Only a wallet the user unlocked is stashed silently; a seed that is in
++    // session for a payment in flight is not the user's consent.
+     var a = ss.getItem('btcpayWallet'),
+-        b = ss.getItem('wallet');
++        b = isWalletUnlocked() ? ss.getItem('wallet') : null;
+     if(enabled && a==null){
+         if(b){
+             ss.setItem('btcpayWallet',b);
+@@ -1318,6 +1330,12 @@ function processBtcpayQueue(){
+         // Check if the BTCPay dialog box is visible... if so, bail out
+         if($('#btcpay-form').length)
+             return;
++        // While a password dialog is up (unlock, migrate, enable Auto-BTCpay,
++        // change password), the manual prompt and its "Wallet Locked" notice
++        // would only stack on top of it; the next tick offers the match once
++        // the dialog is gone.
++        if(isPasswordDialogOpen())
++            return;
+         FW.DIALOG_DATA = data;
+         dialogBTCpay(false);
+     }
+@@ -4138,7 +4156,7 @@ function dialogRemoveWalletAddress(address){
+ function dialogViewPrivateKey(address){
+     var address = (address) ? address : FW.WALLET_ADDRESS;
+     // Make sure wallet is unlocked before showing send dialog box
+-    if(!ss.getItem('wallet')){
++    if(!isWalletUnlocked()){
+         dialogMessage('Wallet Locked!', 'You will need to unlock your wallet before you can view the private key', true);
+         return;
+     }
+@@ -4438,6 +4456,9 @@ function dialogLock(){
+ 
+ // 'View Passphrase' dialog box
+ function dialogPassphrase(){
++    // The seed is shown in cleartext: gated here as well as at the caller.
++    if(dialogCheckLocked('view your wallet passphrase'))
++        return;
+     BootstrapDialog.show({
+         type: 'type-default',
+         cssClass: 'dialog-view-passphrase',
+@@ -4590,9 +4611,25 @@ function dialogAddAddress(){
+ }
+ 
+ 
+-// Function to handle checking if the wallet is unlocked and displaying an error, and return false if 
++// Whether one of the password dialogs (unlock, migrate, new wallet, enable
++// Auto-BTCpay, change password) is open. They all carry this cssClass. The
++// check reads BootstrapDialog's instance registry rather than the DOM: an
++// instance is registered the moment show() is called and removed when the
++// modal has hidden, whereas the modal element itself is appended only after
++// the backdrop's fade, a few hundred milliseconds later, which is long enough
++// for the launch-time queue check to miss a dialog that was just opened.
++function isPasswordDialogOpen(){
++    var open = false;
++    $.each(BootstrapDialog.dialogs, function(id, d){
++        if(d.options && d.options.cssClass=='btc-wallet-password')
++            open = true;
++    });
++    return open;
++}
++
++// Function to handle checking if the wallet is unlocked and displaying an error, and return false if
+ function dialogCheckLocked(action, callback){
+-    if(!ss.getItem('wallet')){
++    if(!isWalletUnlocked()){
+         dialogMessage('Wallet Locked!', 'You will need to unlock your wallet before you can ' + action, true, true, callback);
+         return true;
+     }
+diff --git a/test/tools.test.js b/test/tools.test.js
+new file mode 100644
+index 0000000..87a8ffe
+--- /dev/null
++++ b/test/tools.test.js
+@@ -0,0 +1,31 @@
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { execFileSync } from 'node:child_process';
++import { fileURLToPath } from 'node:url';
++import { dirname, join } from 'node:path';
++
++// The wallet checks live in tools/*.cjs as standalone scripts (each prints its
++// checks and exits non-zero on the first failure). Running them from here puts
++// them under `npm test`, which is what CI runs. The wiring script derives many
++// PBKDF2 keys at the shipped iteration count, so it takes a few minutes.
++const here = dirname(fileURLToPath(import.meta.url));
++const scripts = ['test-sanitization.cjs', 'test-wallet-crypto.cjs', 'test-wallet-wiring.cjs'];
++
++for (const script of scripts) {
++    test(`tools/${script}`, { timeout: 15 * 60 * 1000 }, () => {
++        let out;
++        try {
++            out = execFileSync(process.execPath, [join(here, '..', 'tools', script)], {
++                encoding: 'utf8',
++                stdio: ['ignore', 'pipe', 'pipe'],
++                timeout: 14 * 60 * 1000, // a hung script is killed, not waited on
++            });
++        } catch (e) {
++            // The script's own output is where the failing check is named.
++            assert.fail(`${script} exited ${e.status ?? e.signal}\n${e.stdout ?? ''}${e.stderr ?? ''}`);
++        }
++        const m = out.match(/(\d+) checks passed/);
++        assert.ok(m, `${script} did not report its check count:\n${out}`);
++        assert.ok(Number(m[1]) > 0, `${script} ran no checks`);
++    });
++}
+diff --git a/tools/test-wallet-wiring.cjs b/tools/test-wallet-wiring.cjs
+index 345bb01..8fdf431 100644
+--- a/tools/test-wallet-wiring.cjs
++++ b/tools/test-wallet-wiring.cjs
+@@ -47,7 +47,9 @@ const names = ['readVault', 'writeVault', 'decryptWallet', 'persistWallet', 'enc
+                'rebuildVaultFromV1', 'discardV1Backup', 'getWallet',
+                'isValidWalletPassword', 'validateNewWalletPassword', 'lockWallet',
+                'initWallet', 'checkBtcpayAuth', 'disableBtcpayAutopay',
+-               'dialogPassword', 'dialogMigrate', 'dialogEnableBtcpay'];
++               'dialogPassword', 'dialogMigrate', 'dialogEnableBtcpay',
++               'isWalletUnlocked', 'dialogCheckLocked', 'processBtcpayQueue', 'cleanupBtcpay',
++               'isPasswordDialogOpen', 'dialogPassphrase'];
+ const extracted = names.map(n => extract(appSrc, n)).join('\n\n');
+ 
+ // Everything the extracted code reaches into that is not itself extracted is
+@@ -57,7 +59,8 @@ const extracted = names.map(n => extract(appSrc, n)).join('\n\n');
+ // assigns to `fields` (keyed by selector), so each button's action handler runs
+ // the real code against mock storage.
+ const SPIES = ['dialogWelcome', 'checkUpdateWallet', 'setInterval', 'updateWalletOptions',
+-               'updateOracleList', 'updateDonationList', 'dialogMessage', 'dialogConfirm'];
++               'updateOracleList', 'updateDonationList', 'dialogMessage', 'dialogConfirm',
++               'checkBtcpayTransactions', 'dialogBTCpay', 'autoBtcpay'];
+ 
+ // A mock Web Storage: get/set/removeItem over a plain object, values stringified
+ // like the browser does.
+@@ -78,7 +81,8 @@ const ok = (m) => { n++; console.log('  ok', m); };
+ function newEnv() {
+   const ls = mockStorage(), ss = mockStorage();
+   const FW = { WALLET_ENCKEY: null, WALLET_KEYS: {}, WALLET_ENCRYPTED: 0,
+-               BTCPAY_ORDERS: { mainnet: {}, testnet: {} } };
++               BTCPAY_ORDERS: { mainnet: {}, testnet: {} }, BTCPAY_QUEUE: { mainnet: [], testnet: [] },
++               NETWORK_INFO: { network_info: { mainnet: { block_height: 100 }, testnet: { block_height: 100 } } } };
+   const calls = [];
+   const fields = {};
+   // Enough of jQuery for the extracted code: $(selector).val()/append()/focus()
+@@ -89,7 +93,9 @@ function newEnv() {
+     focus() {},
+   });
+   $.each = (obj, fn) => { for (const k in obj) if (fn.call(obj[k], k, obj[k]) === false) break; };
+-  const BootstrapDialog = { show: (opts) => { sandbox.__dialog = opts; } };
++  // `dialogs` mirrors BootstrapDialog's live-instance registry, which
++  // isPasswordDialogOpen reads; a test fills it with what show() would have.
++  const BootstrapDialog = { show: (opts) => { sandbox.__dialog = opts; }, dialogs: {} };
+   const sandbox = { ls, ss, FW, WalletCrypto, JSON, Error, console, $, calls, fields, BootstrapDialog };
+   for (const s of SPIES) sandbox[s] = (...args) => { calls.push([s, ...args]); };
+   vm.createContext(sandbox);
+@@ -397,6 +403,7 @@ function inlineKey() { return '__key'; }
+   env.FW.BTCPAY_ORDERS.mainnet['1addr'] = { 'orderhash1': 1 };
+   env.FW.WALLET_KEYS = { '1imp': 'impwif' };
+   env.ss.setItem('wallet', 'seedopen0000000000');
++  env.FW.WALLET_ENCKEY = { enc: 'x', mac: 'y' }; // an unlocked wallet: seed and key
+   vm.runInContext('checkBtcpayAuth()', env);
+   assert.strictEqual(env.ss.getItem('btcpayWallet'), 'seedopen0000000000', 'open wallet: seed stashed');
+   assert.strictEqual(env.ss.getItem('btcpayKeys'), JSON.stringify({ '1imp': 'impwif' }), 'open wallet: keys stashed with it');
+@@ -560,4 +567,61 @@ function inlineKey() { return '__key'; }
+   ok('damaged vault: rebuilt from the legacy backup on a proven password, refused otherwise');
+ })();
+ 
++// --- a hot-swapped seed is not an unlocked wallet ---------------------------
++(function () {
++  const env = newEnv();
++  // What autoBtcpay does for a locked wallet: the stash lands in ss.wallet, no key.
++  env.ss.setItem('wallet', 'stashedseedforautopay');
++  assert.strictEqual(vm.runInContext('isWalletUnlocked()', env), false, 'seed without a derived key is not unlocked');
++  assert.strictEqual(vm.runInContext('dialogCheckLocked("send funds")', env), true, 'gate refuses during the swap');
++  assert.deepStrictEqual(env.calls[0].slice(0, 2), ['dialogMessage', 'Wallet Locked!'], 'and says so');
++  // The passphrase dialog and the Auto-BTCpay check see the same state.
++  env.calls.length = 0;
++  vm.runInContext('dialogPassphrase()', env);
++  assert.strictEqual(env.__dialog, undefined, 'passphrase dialog not shown during the swap');
++  assert.deepStrictEqual(env.calls[0].slice(0, 2), ['dialogMessage', 'Wallet Locked!']);
++  env.FW.BTCPAY_ORDERS.mainnet['1addr'] = { 'orderhash1': 1 };
++  vm.runInContext('checkBtcpayAuth()', env);
++  assert.strictEqual(env.ss.getItem('btcpayWallet'), null, 'a swapped seed is not stashed as consent');
++  assert.ok(env.__dialog && /Enable Auto-BTCpay/.test(env.__dialog.title), 'the check asks instead');
++  env.__dialog = undefined;
++  // A real unlock: key present.
++  env.FW.WALLET_ENCKEY = { enc: 'x', mac: 'y' };
++  assert.strictEqual(vm.runInContext('isWalletUnlocked()', env), true);
++  assert.strictEqual(vm.runInContext('dialogCheckLocked("send funds")', env), undefined, 'gate passes when unlocked');
++  vm.runInContext('checkBtcpayAuth()', env);
++  assert.strictEqual(env.ss.getItem('btcpayWallet'), 'stashedseedforautopay', 'an unlocked wallet is stashed silently');
++  // Locked for real: neither.
++  env.FW.WALLET_ENCKEY = null; env.ss.removeItem('wallet');
++  assert.strictEqual(vm.runInContext('isWalletUnlocked()', env), false);
++  ok('isWalletUnlocked/dialogCheckLocked: seed and derived key both required');
++})();
++
++// --- the manual-payment prompt waits while a password dialog is on screen ---
++(function () {
++  const env = newEnv();
++  env.ls.setItem('btcpayLastCleanup', String(Date.now()));
++  // An auto-pay match with a stash present, then one that needs manual payment
++  // (the loop stops at the first manual match, so it goes last).
++  env.FW.BTCPAY_QUEUE.mainnet = [{ autopay: 1, tx0_hash: 'c', tx1_hash: 'd', expire_index: 200 },
++                                 { autopay: 0, tx0_hash: 'a', tx1_hash: 'b', expire_index: 200 }];
++  env.ss.setItem('btcpayWallet', 'stashedseed');
++  // What BootstrapDialog's registry holds while an unlock dialog is open (from
++  // the moment show() is called, before the modal is in the DOM).
++  env.BootstrapDialog.dialogs = { 'id-1': { options: { cssClass: 'btc-wallet-password' } },
++                                  'id-2': { options: { cssClass: 'dialog-send-funds' } } };
++  assert.strictEqual(vm.runInContext('isPasswordDialogOpen()', env), true, 'a password dialog is open');
++  vm.runInContext('processBtcpayQueue()', env);
++  assert.ok(!env.calls.some(c => c[0] === 'dialogBTCpay'), 'no manual prompt over a password dialog');
++  assert.ok(env.calls.some(c => c[0] === 'autoBtcpay'), 'auto-pay with a stash still proceeds');
++  env.calls.length = 0;
++  // The password dialog hid (its instance left the registry); another dialog remains.
++  delete env.BootstrapDialog.dialogs['id-1'];
++  assert.strictEqual(vm.runInContext('isPasswordDialogOpen()', env), false, 'other dialogs do not count');
++  vm.runInContext('processBtcpayQueue()', env);
++  assert.ok(env.calls.some(c => c[0] === 'dialogBTCpay'), 'manual prompt shown once the dialog is gone');
++  assert.strictEqual(env.FW.DIALOG_DATA.tx0_hash, 'a', 'for the manual match');
++  ok('processBtcpayQueue holds the manual prompt while a password dialog is registered, offers it after');
++})();
++
+ console.log(`\n${n} checks passed`);

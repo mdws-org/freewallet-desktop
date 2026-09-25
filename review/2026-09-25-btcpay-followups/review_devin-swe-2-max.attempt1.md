@@ -1,0 +1,1 @@
+I'll read the attached files first, then the full sources if needed.The context file was truncated at line 368 of 384. Let me read the remainder, and request access to the full patched sources which live outside the workspace.

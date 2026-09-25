@@ -67,7 +67,7 @@ function generateTransaction(callback=null, broadcast=false){
         FW.SEND_DESTINATIONS = vals.destination;
         // Only make call to API to generate transaction if we have required fields
         if(vals.destination!='' && vals.amount!=''){
-            eval(command)(network, vals.source, vals.destination, vals.memo, is_data, vals.name, amt_sat, fee_sat, callback);
+            window[command](network, vals.source, vals.destination, vals.memo, is_data, vals.name, amt_sat, fee_sat, callback);
         } else {
             if(callback)
                 callback();

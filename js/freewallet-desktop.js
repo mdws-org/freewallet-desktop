@@ -15,6 +15,11 @@ FW = {};
 // Define object to hold data for dialog boxes
 FW.DIALOG_DATA = {};
 
+// Where this fork publishes builds. The update check reads the newest tag from
+// the API and sends the user to the release page for it.
+FW.RELEASES_API = 'https://api.github.com/repos/mdws-org/freewallet-desktop/releases/latest';
+FW.RELEASES_URL = 'https://github.com/mdws-org/freewallet-desktop/releases';
+
 // Define list of API keys used
 FW.API_KEYS = {};
 
@@ -249,37 +254,26 @@ function setCounterpartyAPI(network){
     });
 }
 
-// Handle checking for an updated wallet version
+// Handle checking for an updated wallet version against this fork's releases.
+// `message` is set for a user-initiated check (About, Donate), so it also
+// reports "up to date" and a failed lookup; the startup check stays silent.
 function checkWalletUpgrade(version, message){
     $.ajax({
-        url: "https://freewallet.io/releases/current",
-        cache: false
-    }).done(function(current){
-        // Only proceed if we have a response/version
-        if(current){
-            var a  = version.trim().split('.'),
-                b  = current.trim().split('.'),
-                majorA = parseInt(a[0]),
-                majorB = parseInt(b[0]),
-                minorA = parseInt(a[1]),
-                minorB = parseInt(b[1]),
-                patchA = parseInt(a[2]),
-                patchB = parseInt(b[2]),
-                update = false;
-            // Check for any semantic versioning differences
-            if(majorA < majorB){ // Major
-                update = true;
-            } else if(majorA == majorB && minorA < minorB){ // Minor
-                update = true;
-            } else if(majorA == majorB && minorA == minorB && patchA < patchB){ // Patch
-                update = true;
-            }
-            // If an update is available, handle notifying the user
-            if(update)
-                dialogUpdateAvailable(current.trim());
-            else if(message)
-                dialogMessage('Current Release', 'You are running the latest version of FreeWallet', false, true);
-        }
+        url: FW.RELEASES_API,
+        dataType: 'json',
+        cache: false,
+        headers: { 'Accept': 'application/vnd.github+json' }
+    }).done(function(o){
+        var current = String((o && o.tag_name) || '').replace(/^v/i, '').trim();
+        if(!current)
+            return;
+        if(isNewerVersion(current, version))
+            dialogUpdateAvailable(current);
+        else if(message)
+            dialogMessage('Current Release', 'You are running the latest version of FreeWallet', false, true);
+    }).fail(function(){
+        if(message)
+            dialogMessage('Current Release', 'The release list could not be reached. Try again later, or open ' + FW.RELEASES_URL, true, true);
     });
 }
 
@@ -4554,27 +4548,13 @@ function dialogUpdateAvailable(version){
             cssClass: 'btn-success', 
             hotkey: 13,
             action: function(dialog){
+                // The release page lists the dmg and its checksum; the fork ships
+                // one build, so there is no per-platform file to pick.
+                var url = FW.RELEASES_URL + '/tag/v' + encodeURIComponent(version);
                 if(is_nwjs()){
-                    var nw   = require('nw.gui'),
-                        os   = require('os'),
-                        plat = os.platform(),
-                        arch = os.arch(),
-                        file = 'FreeWallet.',
-                        url  = 'https://github.com/jdogresorg/freewallet-desktop/releases/download/v' + version + '/';
-                    // Determine the correct file to download based off platform and architecture
-                    if(plat=='darwin'){
-                        file += 'osx64.dmg';
-                    } else if(plat=='win32'){
-                        file += (arch=='x64') ? 'win64' : 'win32';
-                        file += '.exe'
-                    } else {
-                        file += (arch=='x64') ? 'linux64' : 'linux32';
-                        file += '.tgz'
-                    }
-                    url += file;
+                    var nw = require('nw.gui');
                     nw.Shell.openExternal(url);
                 } else {
-                    var url = 'https://github.com/jdogresorg/freewallet/releases/tag/v' + version;
                     window.open(url);
                 }
             }

@@ -6790,6 +6790,13 @@ function showAssetArtwork(o){
         $('#artwork-information').show();
         $('#artwork-title').text(title).parent().show();
     }
+    // Media URLs come from asset metadata. Anything that is not an http(s)
+    // URL is dropped here, before it can reach a src attribute, and only the
+    // youtube/soundcloud kinds are ever placed in an iframe (see embed-url.js).
+    var videoKind = video ? classifyMediaUrl(video) : false,
+        audioKind = audio ? classifyMediaUrl(audio) : false;
+    if(!videoKind) video = false;
+    if(!audioKind) audio = false;
     if(image||audio||video){
         $('#additionalInfoNotAvailable').hide();
         $('#digitalArtInfo').show();
@@ -6842,7 +6849,7 @@ function showAssetArtwork(o){
             // video comes from NFT metadata; escape it before it goes into a
             // src attribute so a crafted value cannot break out and inject HTML.
             var vsrc = escapeHtml(video);
-            if(/youtube/.test(video)){
+            if(videoKind=='youtube'){
                 el   = $('#video-wrapper-youtube'),
                 html = '<iframe src="' + vsrc + '" frameborder="0" allowfullscreen class="embedded-video"></iframe>';
             } else {
@@ -6860,7 +6867,7 @@ function showAssetArtwork(o){
             // audio comes from NFT metadata; escape it before it goes into a src
             // attribute (see the video block above).
             var asrc = escapeHtml(audio);
-            if(/soundcloud/.test(audio)){
+            if(audioKind=='soundcloud'){
                 el = $('#audio-wrapper-soundcloud');
                 html = '<iframe src="https://w.soundcloud.com/player/?url=' + asrc + '" frameborder="0" allowfullscreen class="soundcloud-audio" style="width:100%;"></iframe>';
             } else {

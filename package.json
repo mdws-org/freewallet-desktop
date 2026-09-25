@@ -7,6 +7,9 @@
   "license": "MIT",
   "user-agent": "%name %ver (%osinfo)",
   "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/jdogresorg/freewallet-desktop.git"

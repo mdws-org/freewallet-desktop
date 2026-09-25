@@ -5,6 +5,8 @@ on:
     branches:
       - master
       - ci-macos-arm64
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
@@ -169,3 +171,52 @@ jobs:
             ${{ env.VERIFY_LOG }}
           retention-days: 30
           if-no-files-found: error
+
+  # A v* tag publishes the bundle the build job verified as a GitHub Release:
+  # the dmg under a version-only name, its sha256, the verification log, and
+  # the CHANGELOG section for that version as the notes. The tag must match the
+  # version the bundle reports, or nothing is published.
+  release:
+    name: publish-release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the verified bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: FreeWallet-arm64-${{ github.sha }}
+          path: artifact
+
+      - name: Check the tag against the built version and collect the notes
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          dmg="$(ls artifact/FreeWallet-*-arm64-*.dmg)"
+          built="$(basename "$dmg" | sed -E 's/^FreeWallet-(.+)-arm64-[0-9a-f]+\.dmg$/\1/')"
+          echo "tag: $tag  built: $built"
+          test "$tag" = "$built"
+          out="FreeWallet-${tag}-arm64.dmg"
+          cp "$dmg" "$out"
+          shasum -a 256 "$out" | tee "$out.sha256"
+          awk -v v="$tag" '
+            $0 ~ "^## " { p = ($2 == v); next }
+            p { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md
+          echo "OUT=$out" >> "$GITHUB_ENV"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$OUT" "$OUT.sha256" artifact/verification.log \
+            --title "FreeWallet ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md \
+            --verify-tag

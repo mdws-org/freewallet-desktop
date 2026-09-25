@@ -9,12 +9,16 @@
  *   node build.js --all    # builds osx-arm64 and osx-x64
  */
 import nwbuild from 'nw-builder';
-import { cp, rm, mkdir } from 'node:fs/promises';
+import { cp, rm, mkdir, readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const baseDir = dirname(fileURLToPath(import.meta.url));
+
+// The application version is declared once, in package.json; the bundle's
+// Info.plist takes it from there, and the release job checks the tag against it.
+const { version: appVersion } = JSON.parse(await readFile(resolve(baseDir, 'package.json'), 'utf8'));
 
 // Staging directory holding exactly the files the app needs at runtime.
 // Production dependencies are installed into it by stage() below.
@@ -83,8 +87,8 @@ for (const arch of arches) {
       CFBundleName: 'FreeWallet',
       CFBundleDisplayName: 'FreeWallet',
       CFBundleSpokenName: 'Free Wallet',
-      CFBundleVersion: '2.0.4',
-      CFBundleShortVersionString: '2.0.4',
+      CFBundleVersion: appVersion,
+      CFBundleShortVersionString: appVersion,
       NSHumanReadableCopyright: 'Copyright (c) Jeremy Johnson. MIT License.',
     },
   });

@@ -54,7 +54,7 @@ function generateTransaction(callback=null, broadcast=false){
         command  = (broadcast) ? 'cpBroadcast' : 'createBroadcast';
     // Only make call to API to generate transaction if we have required fields
     if(vals.message!='' || vals.value!='' || vals.fee!=''){
-        eval(command)(network, vals.source, vals.message, value, feed_fee, tstamp, fee_sat, callback);
+        window[command](network, vals.source, vals.message, value, feed_fee, tstamp, fee_sat, callback);
     } else {
         if(callback)
             callback();

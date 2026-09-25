@@ -32,7 +32,7 @@ function generateTransaction(callback=null, broadcast=false){
         amt_sat = getSatoshis(vals['btc-amount']),
         fee_sat = getSatoshis(vals['fee-amount']),
         command = (broadcast) ? 'cpDispense' : 'createDispense';
-    eval(command)(network, source, dest, null, null, 'BTC', amt_sat, fee_sat, callback);
+    window[command](network, source, dest, null, null, 'BTC', amt_sat, fee_sat, callback);
 }
 
 // Callback to run after broadcasting send

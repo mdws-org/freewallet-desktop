@@ -29,7 +29,7 @@ function generateTransaction(callback=null, broadcast=false){
         source  = FW.WALLET_ADDRESS,
         fee_sat = getSatoshis(vals['fee-amount']),
         command = (broadcast) ? 'cpCancel' : 'createCancel';
-    eval(command)(network, source, vals.tx_hash, fee_sat, callback);
+    window[command](network, source, vals.tx_hash, fee_sat, callback);
 }
 
 $(document).ready(function(){

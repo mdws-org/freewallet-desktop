@@ -32,7 +32,7 @@ function generateTransaction(callback=null, broadcast=false){
         command   = (broadcast) ? 'cpMint' : 'createMint';
     // Only make call to API to generate transaction if we have required fields
     if(asset){
-        eval(command)(network, vals.source, asset, amt_sat, fee_sat, callback);
+        window[command](network, vals.source, asset, amt_sat, fee_sat, callback);
     } else {
         if(callback)
             callback();

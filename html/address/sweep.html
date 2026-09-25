@@ -63,7 +63,7 @@ function generateTransaction(callback=null, broadcast=false){
         flags += 4
     // Only make call to API to generate transaction if we have required fields
     if(vals.destination!=''){
-        eval(command)(network, vals.source, vals.destination, flags, vals.memo, fee_sat, callback);
+        window[command](network, vals.source, vals.destination, flags, vals.memo, fee_sat, callback);
     } else {
         if(callback)
             callback();

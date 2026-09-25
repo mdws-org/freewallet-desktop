@@ -47,7 +47,9 @@ const names = ['readVault', 'writeVault', 'decryptWallet', 'persistWallet', 'enc
                'rebuildVaultFromV1', 'discardV1Backup', 'getWallet',
                'isValidWalletPassword', 'validateNewWalletPassword', 'lockWallet',
                'initWallet', 'checkBtcpayAuth', 'disableBtcpayAutopay',
-               'dialogPassword', 'dialogMigrate', 'dialogEnableBtcpay'];
+               'dialogPassword', 'dialogMigrate', 'dialogEnableBtcpay',
+               'isWalletUnlocked', 'dialogCheckLocked', 'processBtcpayQueue', 'cleanupBtcpay',
+               'isPasswordDialogOpen', 'dialogPassphrase'];
 const extracted = names.map(n => extract(appSrc, n)).join('\n\n');
 
 // Everything the extracted code reaches into that is not itself extracted is
@@ -57,7 +59,8 @@ const extracted = names.map(n => extract(appSrc, n)).join('\n\n');
 // assigns to `fields` (keyed by selector), so each button's action handler runs
 // the real code against mock storage.
 const SPIES = ['dialogWelcome', 'checkUpdateWallet', 'setInterval', 'updateWalletOptions',
-               'updateOracleList', 'updateDonationList', 'dialogMessage', 'dialogConfirm'];
+               'updateOracleList', 'updateDonationList', 'dialogMessage', 'dialogConfirm',
+               'checkBtcpayTransactions', 'dialogBTCpay', 'autoBtcpay'];
 
 // A mock Web Storage: get/set/removeItem over a plain object, values stringified
 // like the browser does.
@@ -78,7 +81,8 @@ const ok = (m) => { n++; console.log('  ok', m); };
 function newEnv() {
   const ls = mockStorage(), ss = mockStorage();
   const FW = { WALLET_ENCKEY: null, WALLET_KEYS: {}, WALLET_ENCRYPTED: 0,
-               BTCPAY_ORDERS: { mainnet: {}, testnet: {} } };
+               BTCPAY_ORDERS: { mainnet: {}, testnet: {} }, BTCPAY_QUEUE: { mainnet: [], testnet: [] },
+               NETWORK_INFO: { network_info: { mainnet: { block_height: 100 }, testnet: { block_height: 100 } } } };
   const calls = [];
   const fields = {};
   // Enough of jQuery for the extracted code: $(selector).val()/append()/focus()
@@ -89,7 +93,9 @@ function newEnv() {
     focus() {},
   });
   $.each = (obj, fn) => { for (const k in obj) if (fn.call(obj[k], k, obj[k]) === false) break; };
-  const BootstrapDialog = { show: (opts) => { sandbox.__dialog = opts; } };
+  // `dialogs` mirrors BootstrapDialog's live-instance registry, which
+  // isPasswordDialogOpen reads; a test fills it with what show() would have.
+  const BootstrapDialog = { show: (opts) => { sandbox.__dialog = opts; }, dialogs: {} };
   const sandbox = { ls, ss, FW, WalletCrypto, JSON, Error, console, $, calls, fields, BootstrapDialog };
   for (const s of SPIES) sandbox[s] = (...args) => { calls.push([s, ...args]); };
   vm.createContext(sandbox);
@@ -397,6 +403,7 @@ function inlineKey() { return '__key'; }
   env.FW.BTCPAY_ORDERS.mainnet['1addr'] = { 'orderhash1': 1 };
   env.FW.WALLET_KEYS = { '1imp': 'impwif' };
   env.ss.setItem('wallet', 'seedopen0000000000');
+  env.FW.WALLET_ENCKEY = { enc: 'x', mac: 'y' }; // an unlocked wallet: seed and key
   vm.runInContext('checkBtcpayAuth()', env);
   assert.strictEqual(env.ss.getItem('btcpayWallet'), 'seedopen0000000000', 'open wallet: seed stashed');
   assert.strictEqual(env.ss.getItem('btcpayKeys'), JSON.stringify({ '1imp': 'impwif' }), 'open wallet: keys stashed with it');
@@ -558,6 +565,63 @@ function inlineKey() { return '__key'; }
   r = pressDialog(env, 'dialogPassword(false)', 'Ok', { wallet_password: pw });
   assert.ok(!r.closed && /could not be decrypted/.test(r.messages[0].text), 'no backup: reported, locked');
   ok('damaged vault: rebuilt from the legacy backup on a proven password, refused otherwise');
+})();
+
+// --- a hot-swapped seed is not an unlocked wallet ---------------------------
+(function () {
+  const env = newEnv();
+  // What autoBtcpay does for a locked wallet: the stash lands in ss.wallet, no key.
+  env.ss.setItem('wallet', 'stashedseedforautopay');
+  assert.strictEqual(vm.runInContext('isWalletUnlocked()', env), false, 'seed without a derived key is not unlocked');
+  assert.strictEqual(vm.runInContext('dialogCheckLocked("send funds")', env), true, 'gate refuses during the swap');
+  assert.deepStrictEqual(env.calls[0].slice(0, 2), ['dialogMessage', 'Wallet Locked!'], 'and says so');
+  // The passphrase dialog and the Auto-BTCpay check see the same state.
+  env.calls.length = 0;
+  vm.runInContext('dialogPassphrase()', env);
+  assert.strictEqual(env.__dialog, undefined, 'passphrase dialog not shown during the swap');
+  assert.deepStrictEqual(env.calls[0].slice(0, 2), ['dialogMessage', 'Wallet Locked!']);
+  env.FW.BTCPAY_ORDERS.mainnet['1addr'] = { 'orderhash1': 1 };
+  vm.runInContext('checkBtcpayAuth()', env);
+  assert.strictEqual(env.ss.getItem('btcpayWallet'), null, 'a swapped seed is not stashed as consent');
+  assert.ok(env.__dialog && /Enable Auto-BTCpay/.test(env.__dialog.title), 'the check asks instead');
+  env.__dialog = undefined;
+  // A real unlock: key present.
+  env.FW.WALLET_ENCKEY = { enc: 'x', mac: 'y' };
+  assert.strictEqual(vm.runInContext('isWalletUnlocked()', env), true);
+  assert.strictEqual(vm.runInContext('dialogCheckLocked("send funds")', env), undefined, 'gate passes when unlocked');
+  vm.runInContext('checkBtcpayAuth()', env);
+  assert.strictEqual(env.ss.getItem('btcpayWallet'), 'stashedseedforautopay', 'an unlocked wallet is stashed silently');
+  // Locked for real: neither.
+  env.FW.WALLET_ENCKEY = null; env.ss.removeItem('wallet');
+  assert.strictEqual(vm.runInContext('isWalletUnlocked()', env), false);
+  ok('isWalletUnlocked/dialogCheckLocked: seed and derived key both required');
+})();
+
+// --- the manual-payment prompt waits while a password dialog is on screen ---
+(function () {
+  const env = newEnv();
+  env.ls.setItem('btcpayLastCleanup', String(Date.now()));
+  // An auto-pay match with a stash present, then one that needs manual payment
+  // (the loop stops at the first manual match, so it goes last).
+  env.FW.BTCPAY_QUEUE.mainnet = [{ autopay: 1, tx0_hash: 'c', tx1_hash: 'd', expire_index: 200 },
+                                 { autopay: 0, tx0_hash: 'a', tx1_hash: 'b', expire_index: 200 }];
+  env.ss.setItem('btcpayWallet', 'stashedseed');
+  // What BootstrapDialog's registry holds while an unlock dialog is open (from
+  // the moment show() is called, before the modal is in the DOM).
+  env.BootstrapDialog.dialogs = { 'id-1': { options: { cssClass: 'btc-wallet-password' } },
+                                  'id-2': { options: { cssClass: 'dialog-send-funds' } } };
+  assert.strictEqual(vm.runInContext('isPasswordDialogOpen()', env), true, 'a password dialog is open');
+  vm.runInContext('processBtcpayQueue()', env);
+  assert.ok(!env.calls.some(c => c[0] === 'dialogBTCpay'), 'no manual prompt over a password dialog');
+  assert.ok(env.calls.some(c => c[0] === 'autoBtcpay'), 'auto-pay with a stash still proceeds');
+  env.calls.length = 0;
+  // The password dialog hid (its instance left the registry); another dialog remains.
+  delete env.BootstrapDialog.dialogs['id-1'];
+  assert.strictEqual(vm.runInContext('isPasswordDialogOpen()', env), false, 'other dialogs do not count');
+  vm.runInContext('processBtcpayQueue()', env);
+  assert.ok(env.calls.some(c => c[0] === 'dialogBTCpay'), 'manual prompt shown once the dialog is gone');
+  assert.strictEqual(env.FW.DIALOG_DATA.tx0_hash, 'a', 'for the manual match');
+  ok('processBtcpayQueue holds the manual prompt while a password dialog is registered, offers it after');
 })();
 
 console.log(`\n${n} checks passed`);

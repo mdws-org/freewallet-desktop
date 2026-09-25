@@ -320,7 +320,9 @@ function initWallet(){
         // is locked and the check asks (dialogEnableBtcpay), which is also
         // where auto-pay can be turned off. A legacy wallet cannot answer that
         // dialog until migration has produced a v2 vault, so the migrate
-        // dialog runs the check only on success.
+        // dialog runs the check only on success. The manual-payment prompt for
+        // a queued match is held back by processBtcpayQueue itself while any
+        // password dialog is on screen.
         if(hasV2){
             // v2 vault present (possibly with legacy backup blobs still beside
             // it): prompt for the password to unlock.
@@ -678,6 +680,14 @@ function getWallet(){
     return ss.getItem('wallet');
 }
 
+// Whether the user has unlocked the wallet in this session. The session seed
+// alone does not prove it: autoBtcpay copies the Auto-BTCpay stash into
+// ss 'wallet' for the length of a payment while the wallet is locked. The
+// derived key exists only after a password was verified, so both are required.
+function isWalletUnlocked(){
+    return ss.getItem('wallet')!==null && !!FW.WALLET_ENCKEY;
+}
+
 // Get 12-word passphrase
 function getWalletPassphrase(){
     var w = getWallet(),
@@ -953,7 +963,7 @@ function updateWalletOptions(){
     // Handle updating lock/unlock icon based on state
     var icon = $('#lock > i'),
         lock = $('#lock');
-    if(!ss.getItem('wallet')){
+    if(!isWalletUnlocked()){
         icon.removeClass('fa-unlock').addClass('fa-lock');
         lock.attr('data-original-title','<div class="nowrap">Unlock Wallet</div>');
     } else {
@@ -1081,7 +1091,7 @@ function checkUpdateWallet(){
 // Check if we should auto-lock wallet based on the users preferences
 function checkAutoLock(){
     // If wallet is encrypted, unlocked, auto-lock is enabled, and we are past the auto-lock time, then lock the wallet
-    if(FW.WALLET_ENCRYPTED && ss.getItem('wallet') && FW.WALLET_AUTOLOCK>0 && (FW.WALLET_LAST_UNLOCKED + (FW.WALLET_AUTOLOCK * 60 * 1000)) < Date.now()){
+    if(FW.WALLET_ENCRYPTED && isWalletUnlocked() && FW.WALLET_AUTOLOCK>0 && (FW.WALLET_LAST_UNLOCKED + (FW.WALLET_AUTOLOCK * 60 * 1000)) < Date.now()){
         lockWallet();
         updateWalletOptions();
     }
@@ -1120,9 +1130,11 @@ function checkBtcpayAuth(){
             });
         });
     });
-    // If Auto-BTCpay is enabled, make sure we have unlocked wallet available
+    // If Auto-BTCpay is enabled, make sure we have unlocked wallet available.
+    // Only a wallet the user unlocked is stashed silently; a seed that is in
+    // session for a payment in flight is not the user's consent.
     var a = ss.getItem('btcpayWallet'),
-        b = ss.getItem('wallet');
+        b = isWalletUnlocked() ? ss.getItem('wallet') : null;
     if(enabled && a==null){
         if(b){
             ss.setItem('btcpayWallet',b);
@@ -1317,6 +1329,12 @@ function processBtcpayQueue(){
     if(data){
         // Check if the BTCPay dialog box is visible... if so, bail out
         if($('#btcpay-form').length)
+            return;
+        // While a password dialog is up (unlock, migrate, enable Auto-BTCpay,
+        // change password), the manual prompt and its "Wallet Locked" notice
+        // would only stack on top of it; the next tick offers the match once
+        // the dialog is gone.
+        if(isPasswordDialogOpen())
             return;
         FW.DIALOG_DATA = data;
         dialogBTCpay(false);
@@ -4138,7 +4156,7 @@ function dialogRemoveWalletAddress(address){
 function dialogViewPrivateKey(address){
     var address = (address) ? address : FW.WALLET_ADDRESS;
     // Make sure wallet is unlocked before showing send dialog box
-    if(!ss.getItem('wallet')){
+    if(!isWalletUnlocked()){
         dialogMessage('Wallet Locked!', 'You will need to unlock your wallet before you can view the private key', true);
         return;
     }
@@ -4438,6 +4456,9 @@ function dialogLock(){
 
 // 'View Passphrase' dialog box
 function dialogPassphrase(){
+    // The seed is shown in cleartext: gated here as well as at the caller.
+    if(dialogCheckLocked('view your wallet passphrase'))
+        return;
     BootstrapDialog.show({
         type: 'type-default',
         cssClass: 'dialog-view-passphrase',
@@ -4590,9 +4611,25 @@ function dialogAddAddress(){
 }
 
 
-// Function to handle checking if the wallet is unlocked and displaying an error, and return false if 
+// Whether one of the password dialogs (unlock, migrate, new wallet, enable
+// Auto-BTCpay, change password) is open. They all carry this cssClass. The
+// check reads BootstrapDialog's instance registry rather than the DOM: an
+// instance is registered the moment show() is called and removed when the
+// modal has hidden, whereas the modal element itself is appended only after
+// the backdrop's fade, a few hundred milliseconds later, which is long enough
+// for the launch-time queue check to miss a dialog that was just opened.
+function isPasswordDialogOpen(){
+    var open = false;
+    $.each(BootstrapDialog.dialogs, function(id, d){
+        if(d.options && d.options.cssClass=='btc-wallet-password')
+            open = true;
+    });
+    return open;
+}
+
+// Function to handle checking if the wallet is unlocked and displaying an error, and return false if
 function dialogCheckLocked(action, callback){
-    if(!ss.getItem('wallet')){
+    if(!isWalletUnlocked()){
         dialogMessage('Wallet Locked!', 'You will need to unlock your wallet before you can ' + action, true, true, callback);
         return true;
     }

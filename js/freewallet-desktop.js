@@ -6781,7 +6781,7 @@ function showAssetArtwork(o){
         if(o.images.length){
             var large    = getArrayItemByType(o.images, 'large'),
                 standard = getArrayItemByType(o.images, 'standard'),
-                first    = o.images[0].data;
+                first    = o.images[0];
             image = (large) ? large.data : (standard) ? standard.data : first.data;
             title = (large) ? large.name : (standard) ? standard.name : first.name;
         }
@@ -6793,7 +6793,7 @@ function showAssetArtwork(o){
             var m4a   = getArrayItemByType(o.audio, 'm4a'),
                 mp3   = getArrayItemByType(o.audio, 'mp3'),
                 wav   = getArrayItemByType(o.audio, 'wav'),
-                first = o.audio[0].data;
+                first = o.audio[0];
             audio = (m4a) ? m4a.data : (mp3) ? mp3.data : (wav) ? wav.data : first.data;
             if(!title)
                 title = (m4a) ? m4a.name : (mp3) ? mp3.name : (wav) ? wav.name : first.name;
@@ -6803,7 +6803,7 @@ function showAssetArtwork(o){
             var mp4   = getArrayItemByType(o.video, 'mp4'),
                 mov   = getArrayItemByType(o.video, 'mov'),
                 wmv   = getArrayItemByType(o.video, 'wmv'),
-                first = o.video[0].data;
+                first = o.video[0];
             video = (mp4) ? mp4.data : (mov) ? mov.data : (wmv) ? wmv.data : first.data;
             if(!title)
                 title = (mp4) ? mp4.name : (mov) ? mov.name : (wmv) ? wmv.name : first.name;

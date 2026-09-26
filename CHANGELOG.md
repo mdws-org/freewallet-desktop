@@ -2,6 +2,13 @@
 
 Releases of this fork. Upstream's history ends at 2.0.4 (jdogresorg/freewallet-desktop, commit `fdb7f2f`).
 
+## 2.1.1
+
+Same code as 2.1.0 plus the in-app update check for this fork. Apple Silicon only; the bundle has an ad-hoc signature, so follow the Open Anyway steps in the README to open it.
+
+- The update check reads this fork's latest GitHub release instead of upstream's version file, and Download Now opens that release's page. A user-initiated check that cannot reach the release list now says so.
+- A 2.1.0 install still checks upstream, so it does not learn about this release from inside the application. Download it from the releases page.
+
 ## 2.1.0
 
 First release of the fork. Apple Silicon only. The bundle has an ad-hoc signature, so follow the Open Anyway steps in the README to open it.

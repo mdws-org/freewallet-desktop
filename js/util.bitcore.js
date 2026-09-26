@@ -1,5 +1,12 @@
 /* globals async */ // async binds itself to window
 
+// bitcore's version guard records the loaded instance on the bundle's `global`,
+// which in NW.js is Node's global and outlives a page reload. Each page load is
+// a fresh bundle, so the record from the previous page must go first or the
+// guard rejects this one ("More than one instance of bitcore-lib found").
+if (typeof global !== 'undefined')
+    delete global._bitcore;
+
 var bitcore = require('bitcore-lib');
 var bitcoreMessage = require('bitcore-message'); // this also binds itself to bitcore.Message as soon as it's require'd
 

@@ -25,14 +25,9 @@ This software is provided as is, with no warranty and no support commitment. Bac
 
 Releases are on the [releases page](https://github.com/mdws-org/freewallet-desktop/releases); each carries the dmg, its sha256, and the build's verification log. CI also attaches a dmg to each run on the [Actions tab](https://github.com/mdws-org/freewallet-desktop/actions). What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
 
-These builds carry an ad-hoc signature. They are not signed with an Apple Developer ID and are not notarized, so Gatekeeper refuses to open them.
+From 2.1.2, the release dmg is signed with a Developer ID (Benjamin Meadows, team CY9SLX2KFM) and notarized by Apple, so Gatekeeper opens it without a warning. Drag the app to your Applications folder before you open it. Do not open it from the mounted disk image: macOS runs a downloaded app from a temporary read-only location, and the wallet can fail to find its data directory.
 
-1. Drag the app to your Applications folder. Do not open it from the mounted disk image. macOS runs a quarantined app from a temporary read-only location, and the wallet can fail to find its data directory.
-2. Open the app once and dismiss the warning.
-3. Open System Settings, go to Privacy and Security, and scroll to Security.
-4. Select Open Anyway, then enter your login password.
-
-The Open Anyway button appears for about an hour after the blocked launch. If it is gone, open the app again to bring it back.
+Releases 2.1.0 and 2.1.1, and the dmgs attached to CI runs, carry only an ad-hoc signature, and Gatekeeper refuses to open them. Install 2.1.2 or later instead.
 
 ## Build it yourself
 

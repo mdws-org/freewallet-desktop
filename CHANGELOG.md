@@ -2,6 +2,14 @@
 
 Releases of this fork. Upstream's history ends at 2.0.4 (jdogresorg/freewallet-desktop, commit `fdb7f2f`).
 
+## 2.1.2
+
+The first release signed with a Developer ID and notarized by Apple. Gatekeeper opens it without the Open Anyway steps. Apple Silicon only.
+
+- The application is signed with the hardened runtime. NW.js needs two entitlements under it, `com.apple.security.cs.allow-jit` and `com.apple.security.cs.allow-unsigned-executable-memory`, which are applied to the main executable and to each helper application.
+- After a page reload, bitcore loads again instead of failing with "More than one instance of bitcore-lib found", which left key derivation broken until the application was restarted.
+- Asset artwork, audio and video fall back to the first listed entry when the preferred formats are missing. Before, the fallback produced nothing.
+
 ## 2.1.1
 
 Same code as 2.1.0 plus the in-app update check for this fork. Apple Silicon only; the bundle has an ad-hoc signature, so follow the Open Anyway steps in the README to open it.

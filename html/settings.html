@@ -36,6 +36,16 @@
                             </div>
                         </div>
                         <div class="form-group">
+                            <label class="col-sm-3 control-label no-right-padding">
+                                Backup
+                                <a href="#" data-toggle="tooltip" title='An encrypted file holding this wallet, its address labels and settings. Restoring it needs the backup password and the wallet password.' class="pull-right"><i class="fa fa-lg fa-question-circle-o margin-top-5" ></i></a>
+                            </label>
+                            <div class="col-sm-9">
+                                <a href="#" class="btn btn-default" id="settings-export-backup"><i class="fa fa-lg fa-fw fa-download"></i> Export Wallet Backup</a>
+                                <a href="#" class="btn btn-default" id="settings-import-backup"><i class="fa fa-lg fa-fw fa-upload"></i> Import Wallet Backup</a>
+                            </div>
+                        </div>
+                        <div class="form-group">
                             <label for="address" class="col-sm-3 control-label no-right-padding">
                                 Address
                                 <a href="#" data-toggle="tooltip" title='This is the current wallet address' class="pull-right"><i class="fa fa-lg fa-question-circle-o margin-top-5" ></i></a>
@@ -562,6 +572,14 @@ $(document).ready(function(){
         if(dialogCheckLocked('change your wallet password'))
             return;
         dialogPassword(true);
+    }));
+
+    // Export / import an encrypted wallet backup file
+    $('#settings-export-backup').click($.debounce(100,function(e){
+        dialogExportBackup();
+    }));
+    $('#settings-import-backup').click($.debounce(100,function(e){
+        dialogImportBackup();
     }));
 
     // Handle updating the network

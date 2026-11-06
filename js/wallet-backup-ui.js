@@ -123,13 +123,13 @@ function dialogExportBackup(){
                     }
                 }
                 if(err){
-                    dialogMessage(null, err, true);
+                    backupError(err);
                     return;
                 }
                 dialog.close();
                 BackupFileIO.save(WalletBackup.fileName(), text, function(e, where){
                     if(e)
-                        dialogMessage(null, 'The backup file could not be saved: ' + e.message, true);
+                        backupError('The backup file could not be saved: ' + e.message);
                     else
                         dialogMessage('<i class="fa fa-lg fa-fw fa-download"></i> Backup saved', $('<p></p>').text('Your wallet backup was saved to ' + where + '.'));
                 });
@@ -138,16 +138,23 @@ function dialogExportBackup(){
     });
 }
 
+// Error dialog for messages that can carry text from a backup file or an
+// exception. dialogMessage renders a string as HTML, so the text goes in as a
+// text node.
+function backupError(msg){
+    dialogMessage(null, $('<p></p>').text(String(msg)), true);
+}
+
 // 'Import Wallet Backup': choose a file, then ask for its password.
 function dialogImportBackup(){
     BackupFileIO.open(function(e, text, name){
         if(e){
-            dialogMessage(null, e.message, true);
+            backupError(e.message);
             return;
         }
         var h = WalletBackup.readHeader(text);
         if(!h.ok){
-            dialogMessage(null, h.message, true);
+            backupError(h.message);
             return;
         }
         dialogImportBackupPassword(text, name, h.header);
@@ -185,7 +192,7 @@ function dialogImportBackupPassword(text, name, header){
             action: function(dialog){
                 var res = WalletBackup.open(text, $('[name="backup_password"]').val());
                 if(!res.ok){
-                    dialogMessage(null, res.message, true);
+                    backupError(res.message);
                     return;
                 }
                 dialog.close();
@@ -253,7 +260,7 @@ function importBackupEntries(entries){
     try {
         WalletBackup.apply(ls, entries);
     } catch(e){
-        dialogMessage(null, 'The backup could not be written, and the wallet on this device was left as it was: ' + e.message, true);
+        backupError('The backup could not be written, and the wallet on this device was left as it was: ' + e.message);
         return;
     }
     ['wallet', 'walletPassword', 'btcpayWallet', 'btcpayKeys', 'skipWalletAuth'].forEach(function(k){ ss.removeItem(k); });

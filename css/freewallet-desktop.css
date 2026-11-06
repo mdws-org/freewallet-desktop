@@ -576,6 +576,10 @@ li.history-list-received .history-list-amount {
 .dialog-welcome .btn {
     width: 48%;
 }
+.dialog-welcome .btn.dialog-welcome-import {
+    width: 100%;
+    margin: 10px 0 0 0;
+}
 .dialog-welcome .fa.fa-keyboard-o {
     margin-top: 2px;
 }

@@ -206,11 +206,21 @@ function dialogImportBackupPassword(text, name, header){
 }
 
 // An existing wallet is never replaced without this confirmation, which names
-// the stored entries the import removes or overwrites.
+// the stored entries the import removes or overwrites and requires the current
+// wallet's password, so a session left unlocked or unattended cannot be used to
+// swap in a different wallet. A legacy or unreadable wallet record has no v2
+// verifier to check against; that wallet must be unlocked (which migrates it)
+// or logged out before an import can replace it.
 function dialogConfirmReplaceWallet(entries){
     var replaced = WalletBackup.replacedKeys(ls, entries),
         current  = ls.getItem('walletAddress'),
-        incoming = entries.walletAddress || null;
+        incoming = entries.walletAddress || null,
+        vault    = readVault(),
+        pending  = ['btcpayOrders', 'btcpayMatches', 'btcpayQueue'].some(function(k){ return ls.getItem(k)!==null; });
+    if(!vault || !vault.crypto){
+        backupError('The wallet on this device must be unlocked once (or logged out) before a backup can replace it.');
+        return;
+    }
     BootstrapDialog.show({
         type: 'type-default',
         closeByBackdrop: false,
@@ -227,8 +237,11 @@ function dialogConfirmReplaceWallet(entries){
             msg.append('<p>These stored entries will be replaced or removed:</p>');
             replaced.forEach(function(k){ list.append($('<li></li>').text(k)); });
             msg.append(list);
+            if(pending)
+                msg.append('<p>Pending Auto-BTCpay orders on this device are not in the backup and will be removed.</p>');
             msg.append('<div class="alert alert-danger fade in center bold">Make sure the current wallet\'s 12-word passphrase is written down before you continue.</div>');
             msg.append('<div class="checkbox" id="dialog-import-confirm"><label><input type="checkbox" id="dialog-import-confirm-checkbox"> I have <u>written down</u> or otherwise <u>securely stored</u> the current wallet\'s passphrase.</label></div>');
+            msg.append(backupPasswordInput('current_wallet_password', 'Current Wallet Password', 'margin-top: 10px; '));
             return msg;
         },
         buttons:[{
@@ -245,6 +258,10 @@ function dialogConfirmReplaceWallet(entries){
             action: function(dialog){
                 if(!$('#dialog-import-confirm-checkbox').is(':checked')){
                     $('#dialog-import-confirm').effect('shake', { times: 3, direction: 'up' }, 1000);
+                    return;
+                }
+                if(!isValidWalletPassword($('[name="current_wallet_password"]').val())){
+                    backupError('The current wallet password is not correct.');
                     return;
                 }
                 dialog.close();

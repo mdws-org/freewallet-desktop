@@ -2,6 +2,10 @@
 
 Releases of this fork. Upstream's history ends at 2.0.4 (jdogresorg/freewallet-desktop, commit `fdb7f2f`).
 
+## Unreleased
+
+- NW.js runtime 0.119.2 (Chromium 156, Node 26.12.1), up from 0.92.0 (Chromium 129, Node 22.7).
+
 ## 2.1.2
 
 The first release signed with a Developer ID and notarized by Apple. Gatekeeper opens it without the Open Anyway steps. Apple Silicon only.

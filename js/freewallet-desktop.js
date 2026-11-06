@@ -5089,6 +5089,15 @@ function dialogWelcome(){
                 dialogNewPassphrase();
                 dialog.close();
             }
+        },{
+            // Stays open underneath: a cancelled file choice or a failed
+            // import returns here, and a successful one reloads the app.
+            label: 'Import Wallet Backup',
+            icon: 'fa fa-lg fa-fw fa-upload pull-left',
+            cssClass: 'btn-default dialog-welcome-import',
+            action: function(dialog){
+                dialogImportBackup();
+            }
         }]
     });
 }

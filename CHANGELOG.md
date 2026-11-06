@@ -2,6 +2,13 @@
 
 Releases of this fork. Upstream's history ends at 2.0.4 (jdogresorg/freewallet-desktop, commit `fdb7f2f`).
 
+## 2.1.3 - 2026-11-06
+
+- Settings, on the Wallet tab, can export the wallet to an encrypted backup file and import one. The file holds the wallet record, still encrypted under the wallet password, plus address labels and wallet settings, encrypted again under a backup password chosen at export (PBKDF2-SHA256, 310,000 iterations, a new salt for each export, AES-CBC with HMAC-SHA256). The backup password follows the wallet password rules: at least 12 characters, including a number. Restoring needs the backup password to open the file and the wallet password to unlock the wallet. The passphrase is never written to the file in readable form, and restoring from the passphrase still works without either password.
+- The welcome screen can import a backup file in place of creating a wallet or entering a passphrase.
+- An import checks the password and the file's integrity before reading anything from it, accepts only the wallet entries a backup is made of, and does not replace a wallet already on the device until the replacement is confirmed. Cached balances, history and pending Auto-BTCpay orders of the replaced wallet are removed.
+- NW.js runtime 0.119.2 (Chromium 156, Node 26.12.1), up from 0.92.0 (Chromium 129, Node 22.7).
+
 ## 2.1.2
 
 The first release signed with a Developer ID and notarized by Apple. Gatekeeper opens it without the Open Anyway steps. Apple Silicon only.

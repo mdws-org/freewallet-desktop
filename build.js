@@ -2,7 +2,7 @@
  * NW.js builder script (nw-builder 4.x, ESM)
  *
  * Produces native NW.js application bundles for macOS. FreeWallet runs natively
- * on Apple Silicon (arm64) using NW.js 0.92.0 with no source changes, so arm64
+ * on Apple Silicon (arm64) using NW.js 0.119.2 with no source changes, so arm64
  * is built by default. Pass `--all` to also build the Intel (x64) bundle.
  *
  *   node build.js          # builds osx-arm64
@@ -39,7 +39,7 @@ const includes = [
 ];
 
 // NW.js runtime version verified to run FreeWallet on Apple Silicon.
-const version = '0.92.0';
+const version = '0.119.2';
 const flavor = 'normal';
 
 // Build arm64 by default; `--all` also produces the Intel (x64) bundle.

@@ -1,0 +1,34 @@
+[package]
+name = "freewallet"
+version = "3.0.0-alpha.1"
+description = "FreeWallet desktop shell (Tauri v2)"
+license = "MIT"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[lib]
+name = "freewallet_lib"
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# Debug builds only (a release build with it fails to compile); see src/test_hooks.rs.
+test-hooks = []
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.5", features = [] }
+tauri-plugin-opener = "=2.7.2"
+tauri-plugin-clipboard-manager = "=2.5.0"
+tauri-plugin-dialog = "=2.8.3"
+tauri-plugin-fs = "=2.7.1"
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

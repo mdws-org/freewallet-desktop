@@ -4,13 +4,17 @@
  * the shell's file save/open (BackupFileIO).
  */
 
-// File save/open for the shell the page runs in. NW.js gets a native save
-// dialog through <input nwsaveas> and writes with Node's fs; a plain browser
-// (and a later non-NW shell until it supplies its own calls) gets a download.
-// Opening uses a file input and FileReader, which work everywhere.
+// File save/open for the shell the page runs in. The Tauri shell supplies
+// window.fwHost.files (native dialogs, and a read or write of the picked path
+// only). NW.js gets a native save dialog through <input nwsaveas> and writes
+// with Node's fs. A plain browser gets a download, and opens with a file input
+// and FileReader.
 var BackupFileIO = {
+    host: function(){
+        return (typeof window.fwHost === 'object' && window.fwHost && window.fwHost.files) || null;
+    },
     isNW: function(){
-        return typeof nw !== 'undefined' && typeof require === 'function';
+        return !BackupFileIO.host() && typeof nw !== 'undefined' && typeof require === 'function';
     },
     _input: function(attrs, onChange){
         var input = $('<input type="file" style="display:none">').attr(attrs);
@@ -25,7 +29,14 @@ var BackupFileIO = {
     // done(err, where) runs after the file is written; it does not run if the
     // user cancels the save dialog.
     save: function(filename, text, done){
-        if(BackupFileIO.isNW()){
+        var host = BackupFileIO.host();
+        if(host){
+            host.saveText(filename, text).then(function(path){
+                if(path) done(null, path);
+            }, function(e){
+                done(e instanceof Error ? e : new Error(String(e)));
+            });
+        } else if(BackupFileIO.isNW()){
             BackupFileIO._input({ nwsaveas: filename, accept: '.json' }, function(el){
                 var path = el.value;
                 if(!path) return;
@@ -48,6 +59,18 @@ var BackupFileIO = {
     },
     // done(err, text, name) runs once a file has been chosen and read.
     open: function(done){
+        var host = BackupFileIO.host();
+        if(host){
+            host.openText(WalletBackup.MAX_FILE_BYTES).then(function(file){
+                if(file) done(null, file.text, file.name);
+            }, function(e){
+                if(e && e.code === 'TOO_LARGE')
+                    done(new Error('This file is too large to be a FreeWallet backup'));
+                else
+                    done(new Error('The file could not be read'));
+            });
+            return;
+        }
         BackupFileIO._input({ accept: '.json,application/json' }, function(el){
             var file = el.files && el.files[0];
             if(!file) return;

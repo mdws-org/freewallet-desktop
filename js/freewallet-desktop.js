@@ -2293,6 +2293,7 @@ function resetAssetInfo(asset){
     $('#audio-header').hide();
     $('#artwork-image').attr('src','images/icons/xcp.png').hide();
     $('#artwork-stamp').attr('src','images/icons/xcp.png').hide();
+    $('#artwork-frame').empty().hide();
     $('#video-wrapper').html('').hide();
     $('#video-wrapper-youtube').html('').hide();
     $('#audio-wrapper').html('').hide();
@@ -6894,8 +6895,12 @@ function showAssetArtwork(o){
             // Hide image and show loading indicator
             img.hide();  
             load.show();
+            // Under the Tauri shell an https image goes in the sandboxed viewer frame (art-viewer.js)
+            var frameSrc = artFrameSrc(image);
+            if(frameSrc)
+                showArtFrame(frameSrc, load);
             // Request the remote image via jquery (second request will have image cached already)
-            $.get(image, function(data){
+            else withArtData(image, function(data){
                 // Convert XML object to string
                 if(typeof data=='object')
                     data = xmlToString(data);

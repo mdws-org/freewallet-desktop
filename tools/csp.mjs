@@ -69,6 +69,8 @@ export function scriptHashes(root = ROOT) {
 // sniff in showAssetArtwork() fetch from whatever host an issuer chose.
 // style-src keeps 'unsafe-inline' for the inline style= attributes in the
 // templates; styles are not the attack surface this policy is for.
+// fwart: is the Tauri shell's artwork viewer (js/art-viewer.js); NW.js has no
+// such scheme, so there it matches nothing.
 export function buildPolicy(root = ROOT) {
     return [
         "default-src 'self'",
@@ -76,7 +78,7 @@ export function buildPolicy(root = ROOT) {
         "object-src 'none'",
         "base-uri 'none'",
         "form-action 'none'",
-        "frame-src https://www.youtube.com https://w.soundcloud.com",
+        "frame-src https://www.youtube.com https://w.soundcloud.com fwart:",
         "connect-src https: http:",
         "img-src 'self' https: http: data:",
         "media-src https: http: data:",

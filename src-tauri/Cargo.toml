@@ -13,7 +13,9 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 # Debug builds only (a release build with it fails to compile); see src/test_hooks.rs.
-test-hooks = []
+# The objc2 crates are already in the tree through wry; the test build uses them
+# to snapshot the webview.
+test-hooks = ["dep:objc2", "dep:block2", "dep:objc2-app-kit", "dep:objc2-foundation", "dep:objc2-web-kit"]
 
 [build-dependencies]
 tauri-build = { version = "=2.7.4", features = [] }
@@ -25,6 +27,13 @@ tauri-plugin-clipboard-manager = "=2.5.0"
 tauri-plugin-dialog = "=2.8.3"
 tauri-plugin-fs = "=2.7.1"
 serde_json = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6.5", optional = true }
+block2 = { version = "0.6.2", optional = true }
+objc2-app-kit = { version = "0.3.2", optional = true, default-features = false, features = ["std", "NSImage"] }
+objc2-foundation = { version = "0.3.2", optional = true, default-features = false, features = ["std", "NSData", "NSError"] }
+objc2-web-kit = { version = "0.3.2", optional = true, default-features = false, features = ["std", "block2", "objc2-app-kit", "WKWebView", "WKSnapshotConfiguration"] }
 
 [profile.release]
 codegen-units = 1

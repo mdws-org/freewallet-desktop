@@ -42,7 +42,7 @@ test('the policy never allows inline or eval script sources', () => {
     assert.doesNotMatch(scriptSrc, /'unsafe-eval'/);
     assert.match(policy, /object-src 'none'/);
     assert.match(policy, /base-uri 'none'/);
-    assert.match(policy, /frame-src https:\/\/www\.youtube\.com https:\/\/w\.soundcloud\.com/);
+    assert.match(policy, /frame-src https:\/\/www\.youtube\.com https:\/\/w\.soundcloud\.com fwart:(;|$)/);
     assert.ok(scriptHashes(ROOT).length > 0, 'no inline scripts found under html/');
 });
 

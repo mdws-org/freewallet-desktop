@@ -8,6 +8,7 @@
 
 use tauri::{Url, WebviewUrl, WebviewWindowBuilder};
 
+mod art_viewer;
 #[cfg(feature = "test-hooks")]
 mod test_hooks;
 
@@ -21,6 +22,8 @@ fn navigation_allowed(url: &Url) -> bool {
     match url.scheme() {
         // The bundled app (macOS serves it as tauri://localhost).
         "tauri" => url.host_str() == Some("localhost"),
+        // The artwork viewer frame (see art_viewer.rs).
+        art_viewer::SCHEME => url.host_str() == Some("localhost"),
         "about" => matches!(url.path(), "blank" | "srcdoc"),
         "https" => FRAME_ORIGINS.contains(&url.origin().ascii_serialization().as_str()),
         _ => false,
@@ -32,13 +35,14 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_fs::init());
+        .plugin(tauri_plugin_fs::init())
+        .register_uri_scheme_protocol(art_viewer::SCHEME, |_ctx, request| art_viewer::handle(&request));
     #[cfg(not(feature = "test-hooks"))]
     let builder = builder.plugin(tauri_plugin_dialog::init());
     #[cfg(feature = "test-hooks")]
     let builder = builder
         .plugin(test_hooks::dialog_stand_in())
-        .invoke_handler(tauri::generate_handler![test_hooks::test_report]);
+        .invoke_handler(tauri::generate_handler![test_hooks::test_report, test_hooks::test_snapshot]);
     builder
         .setup(|app| {
             // nw.App.manifest.version is read synchronously by the page, so the
@@ -77,6 +81,9 @@ mod tests {
         assert!(allowed("about:blank"));
         assert!(allowed("https://www.youtube.com/embed/x"));
         assert!(allowed("https://w.soundcloud.com/player/?url=x"));
+        assert!(allowed("fwart://localhost/view?src=https://example.com/a.png"));
+        assert!(!allowed("fwart://evil/view"));
+        assert!(!allowed("https://example.com/a.png"));
         assert!(!allowed("tauri://evil/index.html"));
         assert!(!allowed("https://example.com/"));
         assert!(!allowed("http://www.youtube.com/embed/x"));

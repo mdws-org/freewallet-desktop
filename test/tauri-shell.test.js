@@ -40,3 +40,8 @@ test('the Tauri shell policy allows no inline or eval script and no plain-http c
     assert.match(policy, /object-src 'none'/);
     assert.match(policy, /frame-ancestors 'none'/);
 });
+
+test('the Tauri shell policy frames only the two players and the artwork viewer', () => {
+    assert.deepEqual(directive(shellPolicy(ROOT), 'frame-src'),
+        ['https://www.youtube.com', 'https://w.soundcloud.com', 'fwart:']);
+});

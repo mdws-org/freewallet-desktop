@@ -1,0 +1,7 @@
+/* The sandboxed frame that shows remote asset artwork (js/art-viewer.js). */
+.artwork-frame {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border: 0;
+}

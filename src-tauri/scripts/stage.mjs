@@ -83,7 +83,8 @@ export function shellPolicy(root = repoDir) {
     `img-src 'self' data: ${IMG_ORIGINS.join(' ')}`,
     "media-src 'self' data: https:",
     `connect-src ipc: http://ipc.localhost ${API_ORIGINS.join(' ')}`,
-    'frame-src https://www.youtube.com https://w.soundcloud.com',
+    // fwart: is the artwork viewer frame (src-tauri/src/art_viewer.rs).
+    'frame-src https://www.youtube.com https://w.soundcloud.com fwart:',
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
